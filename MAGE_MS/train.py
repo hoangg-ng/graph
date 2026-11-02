@@ -1,0 +1,143 @@
+"""Train/evaluate MAGE with a chosen temporal encoder on PEMS0X; write one JSON per run.
+
+Protocol follows the MAGE paper (Sec. 5 / LargeST platform) and official main.py:
+Adam lr 0.02 wd 1e-4, MultiStepLR(0.5) at the official milestones, grad-clip 5, masked L1 on
+raw flow, bs 64, <=300 epochs, patience 30 on val MAE, d=128, dG=32, 16 experts, top-4,
+load-balancing bias updated by sign rule with lr 1e-3 (paper Eq. on beta_k; the line is
+commented out in the release, we enable it as the paper describes).
+The official engine is not usable as released (MAGE_enine.evaluate saves to /data/mjm1/... and
+calls sys.exit(0)), so this is a re-implementation of the same loop with data kept on GPU.
+"""
+import argparse
+import json
+import os
+import time
+from types import SimpleNamespace
+
+import numpy as np
+import torch
+
+import models
+import streams
+
+ROOT = os.path.dirname(os.path.abspath(__file__))
+
+
+def masked_metrics(pred, y):
+    m = (y != 0).float()
+    m = m / m.mean()
+    err = (pred - y).abs() * m
+    mae = err.mean()
+    rmse = (((pred - y) ** 2) * m).mean().sqrt()
+    mape = torch.where(y != 0, err / y.abs().clamp_min(1e-6), torch.zeros_like(err)).mean() * 100
+    return mae, rmse, mape
+
+
+def main():
+    p = argparse.ArgumentParser()
+    p.add_argument('--dataset', default='PEMS08')
+    p.add_argument('--encoder', default='linear')
+    p.add_argument('--arm', default=None, help='step 8: build streams.MAGEStream with this arm')
+    p.add_argument('--seq_len', type=int, default=12)
+    p.add_argument('--horizon', type=int, default=12)
+    p.add_argument('--seed', type=int, default=0)
+    p.add_argument('--device', default='cuda:0')
+    p.add_argument('--epochs', type=int, default=300)
+    p.add_argument('--patience', type=int, default=30)
+    p.add_argument('--lr', type=float, default=0.02)
+    p.add_argument('--wd', type=float, default=1e-4)
+    p.add_argument('--bs', type=int, default=64)
+    p.add_argument('--lb', type=int, default=1)
+    p.add_argument('--data_dir', default='data')
+    p.add_argument('--out', required=True)
+    a = p.parse_args()
+
+    torch.manual_seed(a.seed); np.random.seed(a.seed)
+    dev = torch.device(a.device)
+    z = np.load(f'{ROOT}/{a.data_dir}/{a.dataset}/his.npz')
+    data = torch.from_numpy(z['data']).to(dev)              # (T, N, C) normalised values + tod + dow
+    mean, std = float(z['mean']), float(z['std'])
+    flow = data[..., 0] * std + mean                         # raw flow for labels
+    flow = torch.where(flow.abs() < 1e-3, torch.zeros_like(flow), flow)
+    idx = {k: torch.from_numpy(np.load(f'{ROOT}/{a.data_dir}/{a.dataset}/idx_{k}.npy')).to(dev) for k in ['train', 'val', 'test']}
+    N, C = data.shape[1], data.shape[2]
+    xo = torch.arange(-(a.seq_len - 1), 1, device=dev)
+    yo = torch.arange(1, a.horizon + 1, device=dev)
+
+    def batch(ix):
+        return data[ix[:, None] + xo], flow[ix[:, None] + yo]  # (b,T,N,C), (b,H,N)
+
+    margs = SimpleNamespace(model_dim=128, recur_num=16, topk=4, node_num=N, feature_dim=C - 2,
+                            second=0, minute=288, hour=0, day=7, week=0, weekday=0, month=0,
+                            quarter=0, year=0, bs=a.bs)
+    models.use_linear_contraction(True)
+    if a.arm:
+        model = streams.MAGEStream(margs, arm=a.arm, node_num=N, input_dim=C, output_dim=1,
+                                   seq_len=a.seq_len, horizon=a.horizon).to(dev)
+        n_enc = model.encoder_params()
+    else:
+        model = models.MAGEX(margs, encoder=a.encoder, node_num=N, input_dim=C, output_dim=1,
+                             seq_len=a.seq_len, horizon=a.horizon).to(dev)
+        n_enc = models.n_params(model.encoder)
+    n_total = models.n_params(model)
+    print(f'{a.dataset} {a.arm or a.encoder} T={a.seq_len} seed={a.seed} params={n_total} enc={n_enc}', flush=True)
+
+    opt = torch.optim.Adam(model.parameters(), lr=a.lr, weight_decay=a.wd)
+    sched = torch.optim.lr_scheduler.MultiStepLR(opt, milestones=[1, 30, 50, 70, 90, 130, 170, 210, 250, 290, 300], gamma=0.5)
+    bias = torch.zeros(3, margs.recur_num, device=dev)
+
+    def predict(split):
+        model.eval(); P, Y = [], []
+        with torch.no_grad():
+            for ix in idx[split].split(a.bs):
+                x, y = batch(ix)
+                P.append(model(x, bias=bias)[..., 0] * std + mean); Y.append(y)
+        return torch.cat(P), torch.cat(Y)
+
+    best, best_state, wait, ep_times, log = float('inf'), None, 0, [], []
+    torch.cuda.reset_peak_memory_stats(dev)
+    for ep in range(a.epochs):
+        model.train(); t0 = time.time(); losses = []
+        perm = idx['train'][torch.randperm(len(idx['train']), device=dev)]
+        for ix in perm.split(a.bs):
+            x, y = batch(ix)
+            out, counts = model(x, bias=bias)
+            loss = masked_metrics(out[..., 0] * std + mean, y)[0]
+            opt.zero_grad(set_to_none=True); loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 5)
+            opt.step()
+            if a.lb:
+                bias -= 1e-3 * torch.sign(counts.float() - counts.float().mean(-1, keepdim=True))
+            losses.append(loss.item())
+        torch.cuda.synchronize(dev); ep_times.append(time.time() - t0)
+        sched.step()
+        vmae = masked_metrics(*predict('val'))[0].item()
+        log.append((ep + 1, float(np.mean(losses)), vmae))
+        if vmae < best:
+            best, wait = vmae, 0
+            best_state = ({k: v.detach().clone() for k, v in model.state_dict().items()}, bias.clone())
+        else:
+            wait += 1
+        if ep % 10 == 0 or wait == 0:
+            print(f'ep {ep+1} train {np.mean(losses):.3f} val {vmae:.3f} best {best:.3f} {ep_times[-1]:.1f}s', flush=True)
+        if wait >= a.patience:
+            break
+    model.load_state_dict(best_state[0]); bias = best_state[1]
+    P, Y = predict('test')
+    per_h = [[v.item() for v in masked_metrics(P[:, h], Y[:, h])] for h in range(a.horizon)]
+    avg = [v.item() for v in masked_metrics(P, Y)]
+    res = dict(vars(a), params=n_total, enc_params=n_enc, epochs_run=len(log), best_val_mae=best,
+               test_mae=avg[0], test_rmse=avg[1], test_mape=avg[2], per_horizon=per_h,
+               train_s_per_epoch=float(np.mean(ep_times)),
+               peak_mem_mb=torch.cuda.max_memory_allocated(dev) / 2**20, log=log)
+    os.makedirs(os.path.dirname(os.path.abspath(a.out)), exist_ok=True)
+    # best weights + balancing bias, for the routing / regime analyses (re-run predictions later)
+    ck = os.path.join(os.path.dirname(os.path.abspath(a.out)), 'ckpt', os.path.basename(a.out).replace('.json', '.pt'))
+    os.makedirs(os.path.dirname(ck), exist_ok=True)
+    torch.save({'state': best_state[0], 'bias': best_state[1], 'args': vars(a)}, ck)
+    json.dump(res, open(a.out, 'w'))
+    print(f'TEST MAE {avg[0]:.3f} RMSE {avg[1]:.3f} MAPE {avg[2]:.2f} | epochs {len(log)}', flush=True)
+
+
+if __name__ == '__main__':
+    main()

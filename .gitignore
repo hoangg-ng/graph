@@ -1,0 +1,19 @@
+# This folder also holds unrelated projects; only the MAGE study is tracked.
+/*
+!/.gitignore
+!/proposal.md
+!/research_design.md
+!/experiment_log.md
+!/MAGE_MS/
+
+# environment, data and large binaries (rebuild with setup_env.sh / prep.py)
+/MAGE_MS/.venv/
+/MAGE_MS/data/
+/MAGE_MS/data_w288/
+/MAGE_MS/raw/
+/MAGE_MS/paper/
+/MAGE_MS/logs/
+*.pt
+*.npz
+*.npy
+__pycache__/

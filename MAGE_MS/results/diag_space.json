@@ -1,0 +1,116 @@
+{
+ "PEMS08": {
+  "neighbour_value": {
+   "1": {
+    "ridge_own": 13.787642602578574,
+    "ridge_own_plus_neighbours": 13.111818544044128,
+    "gain": 0.6758240585344453
+   },
+   "6": {
+    "ridge_own": 17.494932975228245,
+    "ridge_own_plus_neighbours": 16.973024848437515,
+    "gain": 0.5219081267907306
+   },
+   "12": {
+    "ridge_own": 19.674583263619486,
+    "ridge_own_plus_neighbours": 18.920399339636898,
+    "gain": 0.7541839239825876
+   }
+  },
+  "residual_corr": {
+   "1": {
+    "lag0": {
+     "road_edge_up_to_down": 0.10937745151124928,
+     "road_edge_down_to_up": 0.10937745151124928,
+     "random_pairs": 0.03930019032991739
+    },
+    "lag1": {
+     "road_edge_up_to_down": 0.08526324746920662,
+     "road_edge_down_to_up": 0.008986504571299311,
+     "random_pairs": -0.0010434610602981862
+    },
+    "lag3": {
+     "road_edge_up_to_down": 0.008689057903608957,
+     "road_edge_down_to_up": 0.008398587766199806,
+     "random_pairs": 0.0025105037471261876
+    }
+   },
+   "12": {
+    "lag0": {
+     "road_edge_up_to_down": 0.15979458219977408,
+     "road_edge_down_to_up": 0.15979458219977408,
+     "random_pairs": 0.061331099189539044
+    },
+    "lag1": {
+     "road_edge_up_to_down": 0.13540092271050397,
+     "road_edge_down_to_up": 0.09218053151959406,
+     "random_pairs": 0.03273906235089179
+    },
+    "lag3": {
+     "road_edge_up_to_down": 0.07767731193376667,
+     "road_edge_down_to_up": 0.0781550895364484,
+     "random_pairs": 0.030465687538249756
+    }
+   }
+  },
+  "mean_degree": 3.223529411764706,
+  "isolated_nodes": 0
+ },
+ "PEMS04": {
+  "neighbour_value": {
+   "1": {
+    "ridge_own": 18.042015309871463,
+    "ridge_own_plus_neighbours": 17.38293604092514,
+    "gain": 0.6590792689463214
+   },
+   "6": {
+    "ridge_own": 21.94342330647132,
+    "ridge_own_plus_neighbours": 21.541373819476398,
+    "gain": 0.4020494869949225
+   },
+   "12": {
+    "ridge_own": 24.050565402015838,
+    "ridge_own_plus_neighbours": 23.64482101037404,
+    "gain": 0.40574439164179665
+   }
+  },
+  "residual_corr": {
+   "1": {
+    "lag0": {
+     "road_edge_up_to_down": 0.11624423120245436,
+     "road_edge_down_to_up": 0.11624423120245436,
+     "random_pairs": 0.014781242487189533
+    },
+    "lag1": {
+     "road_edge_up_to_down": 0.12884694270925484,
+     "road_edge_down_to_up": 0.017608719693099305,
+     "random_pairs": 0.002141299749849874
+    },
+    "lag3": {
+     "road_edge_up_to_down": 0.02070542004359193,
+     "road_edge_down_to_up": 0.013469117840520467,
+     "random_pairs": 0.0018308026356692899
+    }
+   },
+   "12": {
+    "lag0": {
+     "road_edge_up_to_down": 0.19319179197735553,
+     "road_edge_down_to_up": 0.19319179197735553,
+     "random_pairs": 0.0314694985264045
+    },
+    "lag1": {
+     "road_edge_up_to_down": 0.19625697378635606,
+     "road_edge_down_to_up": 0.12465069719313575,
+     "random_pairs": 0.022822499691087825
+    },
+    "lag3": {
+     "road_edge_up_to_down": 0.10898576650729068,
+     "road_edge_down_to_up": 0.10353154700913192,
+     "random_pairs": 0.01887688674834121
+    }
+   }
+  },
+  "mean_degree": 2.214983713355049,
+  "isolated_nodes": 0
+ }
+}

@@ -1,0 +1,3 @@
+[submodule "MAGE_MS/official"]
+	path = MAGE_MS/official
+	url = https://github.com/PoorOtterBob/MAGE
