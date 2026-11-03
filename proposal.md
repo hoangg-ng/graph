@@ -41,3 +41,27 @@ A controlled empirical test of whether temporal resolution should determine the 
 
 ## Key References
 MAGE (NeurIPS 2025); TimeMixer (ICLR 2024); MobiMixer (IEEE TMC 2025); MSGNet (AAAI 2024); STID (CIKM 2022).
+
+## Additive implementation
+
+The proposal-specific implementation lives in `MAGE_MS/proposal_model.py`,
+`MAGE_MS/prep_proposal.py`, `MAGE_MS/train_proposal.py`, and `MAGE_MS/run_proposal.py`.
+It does not replace the repository's existing MAGE code or official sources. The
+PDM is a TimeMixer-style adaptation; it is not claimed to be a verbatim copy of
+the official TimeMixer implementation. Suggested PDM width/depth and
+moving-average values are configurable starting points.
+
+Run the focused checks from `MAGE_MS`:
+
+```powershell
+python -m unittest test_proposal test_proposal_prep
+python prep_proposal.py --datasets 04 08 --out data_proposal96
+python train_proposal.py --dataset PEMS04 --arm proposed --data_dir data_proposal96 --device cpu --epochs 1 --patience 1 --out results/proposal_smoke/PEMS04_proposed_s0.json
+python run_proposal.py --device cpu --dry_run
+```
+
+The experiment runner covers the five core variants and two MAGE baselines. It
+does not implement external TimeMixer/STID training or the original 12-to-12
+MAGE reproduction. A one-epoch smoke run is only an execution check, not a
+performance result. Verify the raw data, preprocessing, split consistency,
+power-distance diagnostics, and full-seed experiments before drawing conclusions.
