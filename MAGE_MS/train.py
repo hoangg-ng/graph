@@ -24,13 +24,21 @@ ROOT = os.path.dirname(os.path.abspath(__file__))
 
 
 def masked_metrics(pred, y):
-    m = (y != 0).float()
-    m = m / m.mean()
-    err = (pred - y).abs() * m
-    mae = err.mean()
-    rmse = (((pred - y) ** 2) * m).mean().sqrt()
-    mape = torch.where(y != 0, err / y.abs().clamp_min(1e-6), torch.zeros_like(err)).mean() * 100
+    valid = torch.isfinite(y) & (y > 0)
+    if not valid.any():
+        raise ValueError('No valid targets in batch')
+    err = pred[valid] - y[valid]
+    mae = err.abs().mean()
+    rmse = err.square().mean().sqrt()
+    mape = (err.abs() / y[valid].abs().clamp_min(1e-6)).mean() * 100
     return mae, rmse, mape
+
+
+def optional_metrics(pred, y):
+    try:
+        return [value.item() for value in masked_metrics(pred, y)]
+    except ValueError:
+        return [None, None, None]
 
 
 def main():
@@ -95,12 +103,15 @@ def main():
         return torch.cat(P), torch.cat(Y)
 
     best, best_state, wait, ep_times, log = float('inf'), None, 0, [], []
-    torch.cuda.reset_peak_memory_stats(dev)
+    if dev.type == 'cuda':
+        torch.cuda.reset_peak_memory_stats(dev)
     for ep in range(a.epochs):
         model.train(); t0 = time.time(); losses = []
         perm = idx['train'][torch.randperm(len(idx['train']), device=dev)]
         for ix in perm.split(a.bs):
             x, y = batch(ix)
+            if not (torch.isfinite(y) & (y > 0)).any():
+                continue
             out, counts = model(x, bias=bias)
             loss = masked_metrics(out[..., 0] * std + mean, y)[0]
             opt.zero_grad(set_to_none=True); loss.backward()
@@ -109,7 +120,11 @@ def main():
             if a.lb:
                 bias -= 1e-3 * torch.sign(counts.float() - counts.float().mean(-1, keepdim=True))
             losses.append(loss.item())
-        torch.cuda.synchronize(dev); ep_times.append(time.time() - t0)
+        if not losses:
+            raise ValueError('Training split contains no batches with valid positive targets')
+        if dev.type == 'cuda':
+            torch.cuda.synchronize(dev)
+        ep_times.append(time.time() - t0)
         sched.step()
         vmae = masked_metrics(*predict('val'))[0].item()
         log.append((ep + 1, float(np.mean(losses)), vmae))
@@ -124,12 +139,24 @@ def main():
             break
     model.load_state_dict(best_state[0]); bias = best_state[1]
     P, Y = predict('test')
-    per_h = [[v.item() for v in masked_metrics(P[:, h], Y[:, h])] for h in range(a.horizon)]
-    avg = [v.item() for v in masked_metrics(P, Y)]
+    per_h = [optional_metrics(P[:, h], Y[:, h]) for h in range(a.horizon)]
+    avg = optional_metrics(P, Y)
+    finite = torch.isfinite(Y)
+    positive = finite & (Y > 0)
+    if finite.any():
+        unmasked_error = P[finite] - Y[finite]
+        unmasked_mae = unmasked_error.abs().mean().item()
+        unmasked_rmse = unmasked_error.square().mean().sqrt().item()
+    else:
+        unmasked_mae = unmasked_rmse = None
+    excluded_fraction = 1 - positive.float().mean().item()
     res = dict(vars(a), params=n_total, enc_params=n_enc, epochs_run=len(log), best_val_mae=best,
                test_mae=avg[0], test_rmse=avg[1], test_mape=avg[2], per_horizon=per_h,
+               test_unmasked_mae=unmasked_mae, test_unmasked_rmse=unmasked_rmse,
+               test_excluded_fraction=excluded_fraction,
                train_s_per_epoch=float(np.mean(ep_times)),
-               peak_mem_mb=torch.cuda.max_memory_allocated(dev) / 2**20, log=log)
+               peak_mem_mb=torch.cuda.max_memory_allocated(dev) / 2**20 if dev.type == 'cuda' else None,
+               log=log)
     os.makedirs(os.path.dirname(os.path.abspath(a.out)), exist_ok=True)
     # best weights + balancing bias, for the routing / regime analyses (re-run predictions later)
     ck = os.path.join(os.path.dirname(os.path.abspath(a.out)), 'ckpt', os.path.basename(a.out).replace('.json', '.pt'))

@@ -69,7 +69,7 @@ def stream_block(bk, Hs, bias, mode, gamma=None):
         elif mode == 'nomix':
             S = torch.zeros_like(X)
         elif mode == 'uniform':
-            S = X.mean(1, keepdim=True).expand_as(X) + ops.lam * ops.apply(1, X)
+            S = X.mean(dim=1, keepdim=True).expand_as(X)
         elif mode == 'learned':
             w = torch.softmax(gamma[m], -1)
             Z, S = X, w[0] * X

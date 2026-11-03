@@ -7,6 +7,7 @@
 """
 import time
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import numpy as np
 import torch
@@ -97,6 +98,16 @@ def test_mage_equivalence():
     assert err < 1e-4
 
 
+@torch.no_grad()
+def test_uniform_skips_learned_graph_operators():
+    N = 16
+    m = build('uniform', N)
+    H = torch.randn(4, N, 128, device=dev)
+    with patch.object(streams.GraphOps, 'apply', side_effect=AssertionError('graph operator used')):
+        outputs, _ = streams.stream_block(m.backbone1, [H] * 4, 0, 'uniform')
+    assert len(outputs) == 4
+
+
 def test_cost():
     print('[4] arm proposed, T = 96, batch 8, forward + backward:')
     rows = []
@@ -123,5 +134,6 @@ if __name__ == '__main__':
     test_rows()
     test_dense_power()
     test_mage_equivalence()
+    test_uniform_skips_learned_graph_operators()
     test_cost()
     print('all tests passed')
