@@ -1,0 +1,40 @@
+{
+  "dataset": "PEMS08",
+  "source_file": "PEMS08.npz",
+  "source_sha256": "e1d03ce74e9fb79149e6e7c37c680214822c4a285baa2f42278cacabcd25c075",
+  "source_shape": [
+    17856,
+    170,
+    3
+  ],
+  "prepared_shape": [
+    17856,
+    170,
+    3
+  ],
+  "input_channels": [
+    "normalized_flow",
+    "time_of_day",
+    "day_of_week"
+  ],
+  "seq_len": 96,
+  "horizon": 12,
+  "time_step_minutes": 5,
+  "split_ratio": [
+    0.6,
+    0.2,
+    0.2
+  ],
+  "split_boundaries": {
+    "train_end_exclusive": 10713,
+    "validation_end_exclusive": 14284,
+    "test_end_exclusive": 17856
+  },
+  "origin_counts": {
+    "train": 10606,
+    "val": 3560,
+    "test": 3561
+  },
+  "flow_mean_train": 229.66126256719434,
+  "flow_std_train": 145.64155804475897
+}

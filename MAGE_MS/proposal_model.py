@@ -147,15 +147,15 @@ class ExpertPool(nn.Module):
     def __init__(self, num_experts, num_nodes, graph_dim):
         super().__init__()
         self.num_experts = num_experts
-        self.E1 = nn.Parameter(torch.rand(num_experts, num_nodes, graph_dim))
-        self.E2 = nn.Parameter(torch.rand(num_experts, graph_dim, num_nodes))
+        self.E1 = nn.Parameter(torch.rand(2, num_experts, num_nodes, graph_dim))
+        self.E2 = nn.Parameter(torch.rand(2, num_experts, graph_dim, num_nodes))
         self.lambda_logits = nn.Parameter(torch.zeros(num_experts))
 
     def apply(self, x, route, sign=0):
         if sign not in (0, 1):
             raise ValueError("sign must be 0 (positive) or 1 (negative)")
-        e1 = torch.softmax(self.E1, dim=-1)
-        e2 = torch.softmax(self.E2, dim=-1)
+        e1 = torch.softmax(self.E1[sign], dim=-1)
+        e2 = torch.softmax(self.E2[sign], dim=-1)
         weights = route
         if sign == 1:
             weights = weights * torch.sigmoid(self.lambda_logits).view(1, 1, -1)

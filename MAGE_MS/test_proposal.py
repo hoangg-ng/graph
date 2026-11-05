@@ -67,8 +67,8 @@ class ProposalModelTests(unittest.TestCase):
         route = torch.softmax(torch.randn(2, 5, 3), dim=-1)
         x = torch.randn(2, 5, 4)
 
-        e1 = torch.softmax(pool.E1, dim=-1)
-        e2 = torch.softmax(pool.E2, dim=-1)
+        e1 = torch.softmax(pool.E1[0], dim=-1)
+        e2 = torch.softmax(pool.E2[0], dim=-1)
         experts = torch.einsum("end,edj->enj", e1, e2)
         dense = torch.einsum("bne,enj->bnj", route, experts)
         self.assertTrue(torch.allclose(dense.sum(dim=-1), torch.ones(2, 5), atol=1e-6))
@@ -90,6 +90,27 @@ class ProposalModelTests(unittest.TestCase):
         self.assertFalse(torch.allclose(actual, common))
         actual.square().sum().backward()
         self.assertTrue(torch.all(pool.lambda_logits.grad.abs() > 0))
+
+    def test_separate_signed_graph_parameters(self):
+        pool = ExpertPool(num_experts=3, num_nodes=5, graph_dim=2)
+        self.assertEqual(pool.E1.shape, (2, 3, 5, 2))
+        self.assertEqual(pool.E2.shape, (2, 3, 2, 5))
+
+        route = torch.softmax(torch.randn(2, 5, 3), dim=-1)
+        x = torch.randn(2, 5, 4)
+        lam = torch.sigmoid(pool.lambda_logits)
+        e1_minus = torch.softmax(pool.E1[1], dim=-1)
+        e2_minus = torch.softmax(pool.E2[1], dim=-1)
+        dense_minus = torch.einsum(
+            "bne,end,edj->bnj",
+            route * lam.view(1, 1, -1),
+            e1_minus,
+            e2_minus,
+        )
+
+        expected = torch.bmm(dense_minus, x)
+        actual = pool.apply(x, route, sign=1)
+        torch.testing.assert_close(actual, expected)
 
     def test_schedules_have_matching_power_budget_and_graph_params(self):
         shared = ProposalMAGE(make_args(), "shared", pdm_width=8, pdm_depth=1)
