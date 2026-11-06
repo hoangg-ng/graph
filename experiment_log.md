@@ -103,3 +103,65 @@ Unit tests passed:
   - LargeST-SD data and a FaST reproduction;
   - long-horizon runs;
   - a full literature check.
+
+  Jiwon-work — proposal implementation and matched evaluation
+Source of dates: November 3 and 5 are verified GitHub commit dates. November 6 is based on the server evaluation output shared by Jiwon; the additional evaluation scripts and results are not verified as committed. This section follows the original main experiment log and does not replace its historical entries.
+2026-11-03 — V1: ProposalMAGE and controlled data processing
+Starting point: Existing MAGE and Hoang's multiscale experiments.
+
+Added / modified — preprocessing
+- Fixed the task to 96 input steps -> 12 output steps (5-minute sampling).
+- Used traffic flow + time-of-day + day-of-week, removing occupancy and speed as input features.
+- Changed splitting from chronological sample-index splits to 60/20/20 boundaries on the original time axis. Every prediction target window belongs entirely to its designated split; historical input windows may reach into a preceding interval.
+- Computed the flow mean and standard deviation only on the training time interval, and used the same statistics for validation and test.
+- Added prep_proposal.py, data_proposal96 metadata, and preprocessing tests.
+- Updated legacy preprocessing and masked metrics to handle split boundaries and finite positive targets; changed the legacy Uniform arm to use a pure global mean.
+Added / modified — model
+- Added proposal_model.py and a separate ProposalMAGE, without replacing the existing MAGE implementation.
+- Built four temporal streams using average pooling: 96/48/24/12 steps (5/10/20/40 minutes).
+- Added a TimeMixer-inspired PDM module: moving-average decomposition into trend and seasonal components, seasonal mixing from fine to coarse, trend mixing from coarse to fine. This is an adaptation, not the full official TimeMixer model.
+- Added three spatial blocks with low-rank graph experts, 16 experts, Top-4 routing, and shared routing/expert pools across temporal resolutions within each block.
+- Applied repeated positive graph propagation according to the scale-specific schedule; the new direct S_+^k differs from Hoang's earlier lazy P^k, where P=(I+S_+)/2.
+- Implemented Shared (1,1,1,1), Proposed (1,2,4,8), Reversed (8,4,2,1), Independent (separate expert pools per scale), and Uniform (global mean).
+- Combined per-scale prediction heads; added model tests and a common-protocol MAGE baseline.
+Commits: November 3 code/tests, Proposal implementation.
+2026-11-05 — V2: Separate positive and negative graph experts
+Before: Positive and negative spatial operators reused the same graph factor matrices (E1 and E2).
+
+After:
+- Introduced separate E1 and E2 parameters for positive and negative operators.
+- Repeated positive spatial propagation by schedule while applying negative propagation separately with learned expert-specific coefficients.
+- Updated operator tests and committed PEMS04/PEMS08 preprocessing metadata.
+Motivation: Allow positive and negative graph relations to be learned independently. The MAE effect of this isolated modification has not been measured, so no performance gain is claimed.
+
+Commit: November 5 signed graph experts.
+2026-11-06 — V3: Hyperparameter tuning and matched evaluation (server-side)
+Added / modified:
+- Evaluated ten hyperparameter settings for the Shared arm (up to 60 epochs, patience 15).
+- Selected a common recipe: learning rate 0.005, weight decay 0.0001, dropout 0.3. Selected validation MAE: 18.1777 (not a test result).
+- Launched 60 matched runs: two datasets (PEMS04, PEMS08) x six arms (MAGE, Shared, Proposed, Reversed, Independent, Uniform) x five seeds (0–4).
+- Main settings: 300 maximum epochs, patience 30, four GPUs with one process per GPU and three CPU threads per process.
+- Used matched flow/calendar inputs, chronological target-disjoint splits, common model-independent training settings, and paired seed reporting.
+- Added server-side evaluation and reporting helpers (run_matched_eval.py, report_matched_eval.py); outputs are in results/eval_proposal96. These helpers have not been verified as pushed to GitHub.
+Preliminary PEMS04 snapshot — 6 of 60 jobs completed:
+Model	Runs completed	Masked test MAE
+MAGE	2/5	18.093 +/- 0.016
+Shared	1/5	18.118
+Proposed	1/5	18.171
+Reversed	1/5	18.132
+Independent	1/5	18.095
+Uniform	0/5	pending
+
+
+- MAGE seed 0: test MAE 18.1038, best validation MAE 18.125, stopped at epoch 132.
+- In the only completed paired seed, Proposed did not beat MAGE, Shared or Reversed. These partial results cannot establish five-seed performance.
+- PEMS08: 0/30 completed at the time of this snapshot. The snapshot is not a live status; consult the server for updated results.
+Comparability note: The original MAGE paper (12 -> 12), Hoang's earlier experiments (different features/preprocessing), and this flow-only matched 96 -> 12 study use different protocols and should not be directly compared as if they were identical experiments.
+Follow-up work (not implemented; decide after the 60-run evaluation)
+- [ ] Finish and analyze all matched runs, including paired-seed wins and parameter/compute comparisons.
+- [ ] Compare early-fused multiscale features with separate temporal streams.
+- [ ] Run a no-PDM ablation to isolate temporal mixing effects.
+- [ ] Diagnose excessive propagation/smoothing and, if needed, test reduced schedules as new exploratory variants.
+- [ ] Add TimeMixer/STID external baselines if required for the report.
+- [ ] Update Overleaf to describe the actual PDM, shared routing, positive/negative graph experts, and matched preprocessing/training.
+Documentation rule: Keep completed runs, partial snapshots, and planned experiments separate. Preserve the original 60-run results when testing new versions. Changes selected after inspecting test data should be labeled exploratory and independently validated.
