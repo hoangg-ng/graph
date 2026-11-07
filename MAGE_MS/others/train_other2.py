@@ -118,6 +118,8 @@ for ep in range(epochs):
     if patience and wait >= patience:
         break
 model.load_state_dict(best_state)
+os.makedirs(f'{HERE}/results', exist_ok=True)
+torch.save(best_state, f'{HERE}/results/{a.model}_{a.dataset}_s{a.seed}.pt')   # save before the analysis
 
 # ---------------------------------------------------------------- analysis
 test = evaluate('test')
@@ -129,13 +131,9 @@ with torch.no_grad():
         H = float(np.mean([-(r[r > 0] * np.log(r[r > 0])).sum() / math.log(k) for r, k in zip(M, nnz) if k > 1]))
         support = f'its {int(nnz.mean())} kept links'
     else:
-        model.record = []; evaluate('test', nb=20); maps = model.record; model.record = None
-        # STAEformer maps: (heads*B, T, N, N) rows over keys; ASTGCN maps: (B, N, N) softmax over dim 1 (columns)
-        if a.model == 'astgcn':
-            maps = [m.transpose(1, 2) for m in maps]
-        ent = [(-(m * m.clamp_min(1e-12).log()).sum(-1) / math.log(N)).mean().item() for m in maps]
-        H = float(np.mean(ent))
-        M = torch.stack([m.reshape(-1, N, N).mean(0) for m in maps]).mean(0).cpu().numpy()
+        model.record = []; evaluate('test', nb=20); rec = model.record; model.record = None
+        H = float(np.mean([h for h, _ in rec]))                     # rows are over keys for both models
+        M = torch.stack([m for _, m in rec]).mean(0).numpy()
         support = 'all sensors'
 adj = np.zeros((N, N), bool); adj[src, dst] = adj[dst, src] = True
 off = M[~np.eye(N, dtype=bool)].mean()
@@ -147,8 +145,6 @@ res = dict(model=a.model, dataset=a.dataset, seed=a.seed, test_mae=test, test_ma
            best_val=best, epochs=len(log), mixing_entropy=H, entropy_support=support,
            road_neighbour_weight_vs_random=float(nb), top5_road_share=float(hit), top5_road_chance=float(chance),
            params=sum(t.numel() for t in model.parameters()), log=log)
-os.makedirs(f'{HERE}/results', exist_ok=True)
 json.dump(res, open(f'{HERE}/results/{a.model}_{a.dataset}_s{a.seed}.json', 'w'))
-torch.save(best_state, f'{HERE}/results/{a.model}_{a.dataset}_s{a.seed}.pt')
 print(f'RESULT {a.model} {a.dataset} test {test:.3f} | mixing->mean {test_uniform:.3f} ({test_uniform - test:+.3f}) | '
       f'entropy {H:.3f} over {support} | road-neighbour weight {nb:.2f}x random | top-5 road {100 * hit:.1f}% (chance {100 * chance:.1f}%)')

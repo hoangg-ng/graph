@@ -15,6 +15,14 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
+def summarise(att):
+    """Small per-call summary of attention maps (..., N, N) with rows over keys: mean normalised row entropy and
+    the mean map (on CPU), so recording many test batches does not keep every map in GPU memory."""
+    n = att.shape[-1]
+    ent = (-(att * att.clamp_min(1e-12).log()).sum(-1) / np.log(n)).mean().item()
+    return ent, att.reshape(-1, n, n).mean(0).cpu()
+
+
 # ================================================================ MTGNN
 class MTLayerNorm(nn.Module):
     """Official LayerNorm over (C, N, L) with per-node affine parameters."""
@@ -144,7 +152,7 @@ class Attention(nn.Module):
         else:
             att = torch.softmax(q @ k.transpose(-1, -2) / self.hd ** 0.5, -1)
         if owner is not None and owner.record is not None:
-            owner.record.append(att.detach())
+            owner.record.append(summarise(att.detach()))
         out = torch.cat(torch.split(att @ v, B, dim=0), -1)
         return self.out_proj(out)
 
@@ -219,7 +227,7 @@ class SpatialAttention(nn.Module):
         if o.uniform:
             S = torch.full_like(S, 1.0 / S.shape[1])
         if o.record is not None:
-            o.record.append(S.detach())
+            o.record.append(summarise(S.detach().transpose(1, 2)))   # softmax was over dim 1: rows = transpose
         return S
 
 
