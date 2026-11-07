@@ -238,106 +238,132 @@ Unit tests passed:
 - `MAGE_MS/results/eval_proposal96/matched_mae_summary.csv`
 - `MAGE_MS/results/eval_proposal96/matched_mae_per_seed.csv`
 
-### 2026-11-07 · V5: Computational profiling and additional ablation models
 
-**Status:** Implementation committed to the `Jiwon-work` branch. Follow-up training results have not yet been recorded.
 
-**Computational profiling**
+### 2026-11-07 · V7: Completed follow-up MAE evaluation and computational profiling
 
-Added:
-- `MAGE_MS/profile_models.py`
-- `MAGE_MS/report_complexity.py`
-- `MAGE_MS/test_complexity.py`
+**Status:** The follow-up evaluation is complete, with 40 additional training runs. Together with the original 60 matched runs, the study now contains **100 training runs across 10 model variants**. Computational profiling was performed separately using saved seed-0 checkpoints.
 
-The profiler restores saved checkpoints without retraining and records:
-- Total and trainable parameters.
-- Counted FLOPs for a complete forward pass.
-- Positive and negative spatial propagation counts.
-- Inference latency at batch sizes 1 and 64.
-- Throughput and peak GPU memory.
-- GPU, PyTorch, CUDA, and precision settings.
+#### Experimental setup
 
-FLOPs are based on the operations supported by the PyTorch counting mechanism and should not be interpreted as an exhaustive count of every operation.
+- **Datasets:** PEMS04 and PEMS08.
+- **Forecasting task:** 96 historical steps → 12 future steps, with five-minute sampling.
+- **Original evaluation:** 6 variants × 2 datasets × 5 seeds = 60 runs.
+- **Follow-up evaluation:** 4 variants × 2 datasets × 5 seeds = 40 runs.
+- **Seeds:** 0–4.
+- **Hyperparameters:** Learning rate 0.005, weight decay 0.0001, dropout 0.3.
+- **Training:** Maximum 300 epochs, early-stopping patience 30, batch size 64.
+- **Primary metric:** Masked test MAE, reported as mean ± sample standard deviation.
+- **Computational profiling:** Seed-0 checkpoint per model and dataset, with inference batch sizes 1 and 64.
 
-**Spatial propagation counts per forward pass**
+#### Final matched MAE results
 
-| Variant | Positive | Negative | Total |
-|---|---:|---:|---:|
-| Shared | 12 | 12 | 24 |
-| Proposed | 45 | 12 | 57 |
-| Reversed | 45 | 12 | 57 |
-| Independent | 12 | 12 | 24 |
-| Uniform | 0 | 0 | 0 |
-| No-Spatial | 0 | 0 | 0 |
-| Grouped | 3 | 3 | 6 |
-| Proposed-No-PDM | 45 | 12 | 57 |
+The following table combines the original evaluation with the completed follow-up evaluation.
 
-The original MAGE propagation count is not directly comparable to the ProposalMAGE factorized-operator call count.
+| Model | PEMS04 MAE | PEMS08 MAE |
+|---|---:|---:|
+| MAGE | 18.092 ± 0.022 | 13.813 ± 0.020 |
+| Shared (1,1,1,1) | 18.148 ± 0.056 | 13.930 ± 0.024 |
+| Proposed (1,2,4,8) | 18.130 ± 0.070 | 13.911 ± 0.031 |
+| Reversed (8,4,2,1) | 18.136 ± 0.050 | 13.929 ± 0.031 |
+| Independent | 18.114 ± 0.029 | 13.913 ± 0.012 |
+| Uniform | 17.998 ± 0.039 | 13.827 ± 0.068 |
+| `mage_features` | 18.0183 ± 0.0217 | 13.7602 ± 0.0146 |
+| `no_spatial` | 18.2481 ± 0.0354 | 13.8168 ± 0.0313 |
+| **`grouped`** | **17.8589 ± 0.0211** | **13.6781 ± 0.0369** |
+| `proposed_no_pdm` | 18.0497 ± 0.0300 | 13.8876 ± 0.0320 |
 
-**New ablation variants**
+**Accuracy findings**
 
-| Variant | Implementation | Research purpose |
-|---|---|---|
-| `mage_features` | MAGE with historical-window-local moving averages, first differences, and time-of-day features | Test whether additional temporal features improve the MAGE baseline |
-| `no_spatial` | Four PDM streams without spatial propagation | Assess the contribution of spatial mixing |
-| `grouped` | Four PDM representations concatenated and projected into one spatial stream | Compare grouped and separate multiscale spatial processing |
-| `proposed_no_pdm` | Independent linear scale encoders with the Proposed spatial schedule | Assess the contribution of PDM |
+- **Grouped achieved the lowest mean test MAE on both datasets** among all ten evaluated variants.
+- Relative to the original Proposed model, Grouped reduced mean MAE by approximately **1.50% on PEMS04** and **1.67% on PEMS08**.
+- Relative to the strongest original model on each dataset, Grouped reduced mean MAE by approximately **0.77% on PEMS04** (versus Uniform) and **0.98% on PEMS08** (versus MAGE).
+- The engineered-feature MAGE baseline also improved over the original MAGE baseline on both datasets.
+- No-Spatial performed worse than Grouped on both datasets, suggesting that learned spatial propagation can remain useful after multiscale temporal representations are combined.
+- Proposed-No-PDM outperformed Proposed on PEMS04 but underperformed it on PEMS08. The available results do not establish a consistent benefit or disadvantage from removing PDM.
+- The original hypothesis that increasing spatial propagation strength at coarser temporal resolutions improves forecasting was **not supported by the prespecified decision criterion**.
 
-The Grouped variant also changes the number of spatial streams and parameter count. Its comparison with Proposed is therefore not a parameter-controlled isolation of feature grouping alone.
+**Interpretation**
 
-**Implementation and validation**
-- Removed duplicated feature construction during `mage_features` profiling.
-- Added device-specific CUDA stream handling for latency measurements.
-- Added automated historical-output regression tests against commit `4c6854b`.
-- Corrected the complexity report's measurement-environment reference.
-- Added a follow-up scheduler with default dry-run, saved recipe provenance, restart support, GPU resource checks, and separate output directories.
-- Existing model outputs and saved matched-evaluation results are intended to remain unchanged.
+Grouped combines four PDM-derived temporal representations into a single representation **before spatial processing**. In contrast, Proposed applies scale-dependent spatial propagation to four separate streams and combines their predictions afterward.
 
-**GitHub commits**
-- [`b77d162`](https://github.com/hoangg-ng/graph/commit/b77d1623c42aec782b78088daa1ffd237025445c): Add model complexity profiling and follow-up experiments.
-- [`3cd4007`](https://github.com/hoangg-ng/graph/commit/3cd4007377b1892f3ed65992d7732feeffc32785): Fix model profiling and regression checks.
-- [`dac6bbe`](https://github.com/hoangg-ng/graph/commit/dac6bbef9f893557dfaa7b8045c83ba5a89b73e8): Fix follow-up evaluation manifest resume.
-- [`ffd5d33`](https://github.com/hoangg-ng/graph/commit/ffd5d33357182cbab40e6fdbfb72b32cf11710d4): Fix follow-up runner import and remove unused manifest flag.
+The results suggest that early integration of multiscale temporal representations may be a more effective architectural choice than separate scale-dependent spatial propagation.
 
-**Diagnostic observation**
+However, Grouped also changes the number of spatial streams, prediction heads, parameter count, and propagation operations. Therefore, the observed improvement cannot be attributed exclusively to the temporal fusion order.
 
-The reported seed-0 operator diagnostics found very small differences between some repeated positive-operator powers, with `D(2,4)` and `D(4,8)` approximately on the order of `1e-7`.
+#### Computational profiling: follow-up variants
 
-This suggests that additional applications may not create substantially different spatial operators after the initial propagation. The observation requires further checking across layers, input windows, and random seeds. It does not by itself prove that spatial representations are identical or that the research hypothesis is false.
+The following measurements were obtained from saved seed-0 checkpoints. FLOPs are the operations counted by the PyTorch profiler, not necessarily every operation performed by the model.
 
-### 2026-11-07 · V6: Follow-up evaluation plan
+| Dataset | Variant | Params (M) | Counted GFLOPs | Graph apps (+/−) | Latency B=1 (ms) | Throughput B=64 (samples/s) |
+|---|---|---:|---:|---:|---:|---:|
+| PEMS04 | `grouped` | 3.056 | 1.6528 | 3/3 | 3.815 | 1746.5 |
+| PEMS04 | `mage_features` | 2.765 | 0.9412 | Not comparable | 2.270 | 7714.1 |
+| PEMS04 | `no_spatial` | 1.103 | 2.2152 | 0/0 | 3.748 | 1462.5 |
+| PEMS04 | `proposed_no_pdm` | 2.594 | 6.0576 | 45/12 | 8.180 | 1557.8 |
+| PEMS08 | `grouped` | 2.197 | 0.9152 | 3/3 | 3.860 | 3034.1 |
+| PEMS08 | `mage_features` | 1.906 | 0.5212 | Not comparable | 2.206 | 12367.7 |
+| PEMS08 | `no_spatial` | 1.085 | 1.2267 | 0/0 | 3.717 | 2591.9 |
+| PEMS08 | `proposed_no_pdm` | 1.735 | 3.3543 | 45/12 | 7.994 | 2557.5 |
 
-**Objective:** Evaluate the four newly implemented variants under the existing matched 96 → 12 forecasting protocol.
+**Computational findings**
 
-**Planned evaluation**
-- PEMS04: 4 variants × 5 seeds = **20 runs**.
-- PEMS08: 4 variants × 5 seeds = **20 runs**.
-- Total additional evaluation: **40 runs**.
-- Seeds: 0, 1, 2, 3, 4.
-- Hyperparameters: reuse the selected Shared recipe without selecting new settings based on test MAE.
-- Primary metric: masked test MAE.
-- Additional metrics: RMSE, MAPE, parameters, counted FLOPs, inference latency, throughput, and GPU memory.
+- Grouped uses **6 total graph applications per forward pass**, compared with 57 for Proposed-No-PDM.
+- Grouped has lower counted GFLOPs than No-Spatial and Proposed-No-PDM despite using learned spatial propagation.
+- Grouped requires approximately **72.7% fewer counted FLOPs** than Proposed-No-PDM on both datasets.
+- However, MAGE + Features is computationally more efficient than Grouped in the reported measurements.
+- On PEMS04, Grouped has approximately **1.76× the counted GFLOPs** and **1.68× the batch-1 inference latency** of MAGE + Features.
+- On PEMS08, the corresponding ratios are approximately **1.76×** and **1.75×**.
+- Grouped therefore provides the best observed predictive accuracy, while MAGE + Features provides a favorable accuracy-efficiency alternative.
 
-**Execution files**
-- Launcher: `MAGE_MS/run_followup_eval.py`
-- Training worker: `MAGE_MS/train_eval.py`
-- Recipe: `MAGE_MS/results/tune_shared/selected_recipe.json`
-- New results: `MAGE_MS/results/eval_followup96/`
-- New logs: `MAGE_MS/logs/eval_followup96/`
+**Measurement limitations**
 
-The original 60-run results in `results/eval_proposal96/` must not be overwritten or retrained as part of this follow-up.
+- Computational profiling represents **seed 0**, not the distribution of computational measurements over five seeds.
+- CUDA latency, throughput, and peak allocated memory are hardware- and runtime-dependent.
+- Counted FLOPs depend on the profiler's supported operator formulas.
+- Graph application counts for the MAGE implementation are not directly comparable with factorized operator calls in ProposalMAGE.
+- The computational profiles do not establish training energy consumption or hardware-independent speed.
+- Original and follow-up evaluation results should retain their separate source-code and experiment provenance.
+- The generated report's predefined paired-comparison section does not include comparisons among the new variants; individual paired-seed differences and statistical uncertainty should be analyzed separately.
+
+#### Validation and result provenance
+
+The follow-up complexity report recorded:
+
+- Data/split digest validation: **passed**.
+- Checkpoint/profile code-digest mismatches: **0**.
+
+The complete computational report for the original six variants was also generated. Its individual numerical measurements should be taken directly from the saved original profiling report rather than reconstructed from the follow-up measurements.
+
+**Result locations**
+
+| Result type | Location |
+|---|---|
+| Original 60-run evaluation | `MAGE_MS/results/eval_proposal96/` |
+| Follow-up 40-run evaluation | `MAGE_MS/results/eval_followup96/` |
+| Original model complexity | `MAGE_MS/results/complexity_original_v1/` |
+| Follow-up model complexity | `MAGE_MS/results/complexity_followup_v1/` |
+| Original complexity Markdown | `MAGE_MS/results/complexity_original_v1/model_complexity_table.md` |
+| Follow-up complexity Markdown | `MAGE_MS/results/complexity_followup_v1/model_complexity_table.md` |
+
+The published result files include per-seed evaluation metadata and computational profiles. Model checkpoints (`.pt`), raw datasets, and server logs remain excluded from Git.
+
+#### Research implications and remaining tasks
+
+The main finding is that **the Grouped architecture achieved lower test MAE than the original scale-dependent spatial-mixing proposal on both PEMS04 and PEMS08**, but its computational cost is higher than that of MAGE + Features.
+
+This is an exploratory follow-up finding and should be distinguished from the original prespecified hypothesis test.
 
 **Remaining tasks**
-- [x] Implement the four follow-up variants.
-- [x] Implement computational profiling.
-- [x] Add profiling and historical regression tests.
-- [x] Commit the implementation and fixes to `Jiwon-work`.
-- [ ] Confirm the complete test suite passes on the evaluation server.
-- [ ] Confirm the selected recipe and prepared-data fingerprints.
-- [ ] Complete the 40 follow-up MAE evaluation runs.
-- [ ] Profile the computational cost of all four new variants.
-- [ ] Compare follow-up results with the original six variants, retaining separate code-version identifiers.
-- [ ] Update the proposal and final report with verified results.
-- [ ] Evaluate external TimeMixer and STID baselines if time and project requirements permit.
+- [x] Complete the original 60 matched evaluation runs.
+- [x] Complete the additional 40 evaluation runs.
+- [x] Generate computational profiling reports for the original six and follow-up four variants.
+- [ ] Verify that all original complexity profile entries have `status=completed` and document any code-digest differences.
+- [ ] Produce a consolidated 10-model computational comparison using the measured original and follow-up profile files.
+- [ ] Calculate paired-seed MAE differences for Grouped against MAGE, Uniform, Proposed, and MAGE + Features.
+- [ ] Verify cross-experiment comparability, including preprocessing, checkpoint provenance, and evaluation settings.
+- [ ] Complete the full regression test suite and document any remaining numerical tolerance issues.
+- [ ] Update `proposal.md` and the final presentation to distinguish the original hypothesis from the exploratory Grouped finding.
+- [ ] Consider a parameter-controlled experiment isolating the effect of temporal fusion order, subject to the remaining project schedule.
 
-**Reporting rule:** Do not describe the follow-up runs as completed until all relevant result files have been verified. Record actual MAE, standard deviation, run counts, and computational measurements after execution. Preserve the initial 60-run results as the fixed primary evaluation.
+**Conclusion:** The original hypothesis was not supported by the prespecified comparisons. The exploratory Grouped architecture achieved the best mean MAE on both datasets, while MAGE + Features remained more computationally efficient. Further controlled comparisons are needed to determine which architectural change accounts for Grouped's advantage.
