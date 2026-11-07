@@ -310,6 +310,8 @@ def build_report(mae_dir: Path, profile_dir: Path, overwrite: bool = False):
             {
                 "dataset": row.get("dataset"),
                 "arm": row.get("arm"),
+                "seed": row.get("seed"),
+                "batch_sizes": row.get("profile_batch_sizes", list(row.get("timings", {}))),
                 "device": row.get("device"),
                 "gpu_model": row.get("gpu_model"),
                 "torch_version": row.get("torch_version"),
@@ -327,7 +329,7 @@ def build_report(mae_dir: Path, profile_dir: Path, overwrite: bool = False):
             for row in completed_profiles
         ]
         handle.write("## Measurement environment\n\n")
-        handle.write("Each completed profile records its GPU, PyTorch/CUDA versions, FP32/TF32 setting, batches, warm-up/repeat counts, FLOP method, and checkpoint/profile code-digest match status. See `model_complexity_per_run.csv` for run-level values.\n\n")
+        handle.write("Each completed profile records its GPU, PyTorch/CUDA versions, FP32/TF32 setting, batches, warm-up/repeat counts, FLOP method, and checkpoint/profile code-digest match status. See `profile_environment` in `model_complexity_summary.json` for run-level values.\n\n")
     payload = {
         "mae_results_dir": str(mae_dir),
         "profile_dir": str(profile_dir),

@@ -66,6 +66,7 @@ def _checkpoint_args(checkpoint: dict, dataset: str, arm: str, data_dir: Path, d
 
 
 def _load_profile_inputs(args, dataset: str, arm: str, data_dir: Path, batch_size: int):
+    """Load raw three-channel windows; prepare_input handles feature generation."""
     load_args = SimpleNamespace(**vars(args))
     load_args.device = "cpu"
     if arm == "mage_features":
@@ -76,8 +77,6 @@ def _load_profile_inputs(args, dataset: str, arm: str, data_dir: Path, batch_siz
         raise ValueError(f"{dataset} validation split has fewer than {batch_size} origins")
     offsets = torch.arange(-(args.seq_len - 1), 1, device=origins.device)
     x = data[origins[:, None] + offsets]
-    if arm == "mage_features":
-        x = train_eval.make_window_features(x)
     return data, indices, x
 
 
@@ -110,14 +109,16 @@ def _latencies(model, x, bias, warmup: int, repeats: int, device: torch.device):
         _sync(device)
         measurements = []
         if device.type == "cuda":
-            for _ in range(repeats):
-                start = torch.cuda.Event(enable_timing=True)
-                end = torch.cuda.Event(enable_timing=True)
-                start.record()
-                model(x, bias=bias)
-                end.record()
-                end.synchronize()
-                measurements.append(float(start.elapsed_time(end)))
+            with torch.cuda.device(device):
+                stream = torch.cuda.current_stream(device)
+                for _ in range(repeats):
+                    start = torch.cuda.Event(enable_timing=True)
+                    end = torch.cuda.Event(enable_timing=True)
+                    start.record(stream)
+                    model(x, bias=bias)
+                    end.record(stream)
+                    end.synchronize()
+                    measurements.append(float(start.elapsed_time(end)))
         else:
             for _ in range(repeats):
                 start = time.perf_counter()
@@ -136,16 +137,19 @@ def _feature_latencies(x, warmup: int, repeats: int, device: torch.device):
         for _ in range(warmup):
             train_eval.make_window_features(x)
         _sync(device)
-        for _ in range(repeats):
-            if device.type == "cuda":
-                start = torch.cuda.Event(enable_timing=True)
-                end = torch.cuda.Event(enable_timing=True)
-                start.record()
-                train_eval.make_window_features(x)
-                end.record()
-                end.synchronize()
-                measurements.append(float(start.elapsed_time(end)))
-            else:
+        if device.type == "cuda":
+            with torch.cuda.device(device):
+                stream = torch.cuda.current_stream(device)
+                for _ in range(repeats):
+                    start = torch.cuda.Event(enable_timing=True)
+                    end = torch.cuda.Event(enable_timing=True)
+                    start.record(stream)
+                    train_eval.make_window_features(x)
+                    end.record(stream)
+                    end.synchronize()
+                    measurements.append(float(start.elapsed_time(end)))
+        else:
+            for _ in range(repeats):
                 start = time.perf_counter()
                 train_eval.make_window_features(x)
                 measurements.append((time.perf_counter() - start) * 1000)

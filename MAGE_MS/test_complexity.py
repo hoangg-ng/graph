@@ -1,14 +1,24 @@
-"""CPU checks for model complexity instrumentation and follow-up arms."""
+"""Complexity checks and output regression against pinned Git commit 4c6854b.
+
+Historical tests require that commit locally. Trained-checkpoint regression is
+skipped explicitly when the twelve seed-0 checkpoints or prepared data are absent.
+"""
+import contextlib
 import csv
+import io
 import json
 from pathlib import Path
+import subprocess
+import sys
 import tempfile
 import unittest
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, call, patch
 
+import numpy as np
 import torch
 
+import profile_models
 import run_eval
 import run_followup_eval
 import train_eval
@@ -22,6 +32,42 @@ from proposal_model import (
 from profile_models import _applications, _count_flops
 from report_complexity import build_report
 from run_followup_eval import plan_jobs
+
+ROOT = Path(__file__).resolve().parent
+REFERENCE_COMMIT = "4c6854bfa98c2e3830fe82e24c592399e422cf67"
+REFERENCE_FILES = (
+    "proposal_model.py", "train_proposal.py", "models.py", "prep_proposal.py",
+    "official_repro/src/models/MAGE.py", "official_repro/src/base/model.py",
+)
+# A fresh interpreter imports only the historical model source tree. In
+# particular, its models and src modules cannot reuse current cached imports.
+REFERENCE_RUNNER = """
+import sys
+from types import SimpleNamespace
+import torch
+sys.path.insert(0, sys.argv[1])
+import train_proposal
+torch.set_num_threads(3)
+cases = torch.load(sys.argv[2], map_location='cpu', weights_only=False)
+outputs = []
+for case in cases:
+    x = case['input']
+    model, *_ = train_proposal._build_model(
+        case['arm'], SimpleNamespace(**case['args']), x.shape[2], x.shape[3])
+    model.load_state_dict(case['state'], strict=True)
+    model.eval()
+    with torch.inference_mode():
+        outputs.append([model(x[:batch], bias=case['bias']) for batch in (1, 2)])
+torch.save(outputs, sys.argv[3])
+"""
+
+
+def worker_args(arm):
+    return train_eval.make_parser().parse_args([
+        "--arm", arm, "--device", "cpu", "--out", "unused.json",
+        "--model-dim", "16", "--experts", "4", "--topk", "2",
+        "--graph-dim", "5", "--pdm-width", "8", "--pdm-depth", "1", "--bs", "2",
+    ])
 
 
 def make_args(nodes=7, model_dim=16, experts=4, topk=2, graph_dim=5):
@@ -142,6 +188,63 @@ class ComplexityTests(unittest.TestCase):
             elif arm == "reversed":
                 self.assertEqual(flops[0], proposed_flops)
 
+    def test_mage_features_profile_uses_raw_windows_and_restores_eight_channel_model(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            data_dir = root / "data"
+            prepared = data_dir / "PEMS04"
+            prepared.mkdir(parents=True)
+            data = torch.cat((make_input(batch=1)[0], make_input(batch=1)[0]), dim=0)
+            np.savez_compressed(prepared / "his.npz", data=data.numpy(), mean=0., std=1.)
+            for split, origins in (("train", [95]), ("val", [108, 109]), ("test", [121])):
+                np.save(prepared / f"idx_{split}.npy", np.array(origins, dtype=np.int64))
+            args = worker_args("mage_features")
+            args.data_dir = str(data_dir)
+            with patch.object(train_eval, "make_window_features", wraps=train_eval.make_window_features) as features:
+                _, _, raw = profile_models._load_profile_inputs(
+                    args, "PEMS04", "mage_features", data_dir, 2
+                )
+                self.assertEqual(tuple(raw.shape), (2, 96, 7, 3))
+                features.assert_not_called()
+            model, *_ = train_eval.legacy._build_model("mage_features", args, 7, 8)
+            checkpoint = root / "PEMS04_mage_features_s0.pt"
+            torch.save({
+                "state": model.state_dict(), "bias": torch.zeros(3, 4),
+                "args": vars(args), "data_digest": train_eval.data_digest("PEMS04", str(data_dir)),
+            }, checkpoint)
+            row = profile_models.profile_one(
+                "PEMS04", "mage_features", 0, checkpoint, data_dir,
+                torch.device("cpu"), [1, 2], warmup=0, repeats=1,
+            )
+            self.assertEqual(row["status"], "completed")
+            self.assertGreater(row["flops_counted_per_forward"], 0)
+            self.assertEqual(set(row["feature_preparation_timings"]), {"1", "2"})
+
+    def test_cuda_timers_record_on_the_requested_device_stream(self):
+        device = torch.device("cuda:1")
+        stream = object()
+        for timing in ("model", "features"):
+            with self.subTest(timing=timing):
+                event = MagicMock()
+                event.elapsed_time.return_value = 2.5
+                with (
+                    patch.object(profile_models, "_sync"),
+                    patch.object(torch.cuda, "device") as context,
+                    patch.object(torch.cuda, "current_stream", return_value=stream) as current_stream,
+                    patch.object(torch.cuda, "Event", return_value=event),
+                ):
+                    if timing == "model":
+                        result = profile_models._latencies(
+                            MagicMock(), make_input(), torch.zeros(3, 4), 0, 2, device
+                        )
+                    else:
+                        result = profile_models._feature_latencies(make_input(), 0, 2, device)
+                context.assert_called_once_with(device)
+                current_stream.assert_called_once_with(device)
+                self.assertEqual(event.record.call_args_list, [call(stream)] * 4)
+                self.assertEqual(event.synchronize.call_count, 2)
+                self.assertEqual(result["median_ms"], 2.5)
+
     def test_report_outputs_join_profiles_and_mae(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -170,6 +273,8 @@ class ComplexityTests(unittest.TestCase):
                 "inference_peak_allocated_mib_batch64": 50.0,
                 "parameter_memory_mib_fp32": 0.001,
                 "flops_count_method": "test counter",
+                "gpu_model": "test GPU",
+                "profile_batch_sizes": [1, 64],
             }
             (profile_dir / "profile_PEMS04_proposed_s0.json").write_text(
                 json.dumps(profile), encoding="utf-8"
@@ -194,6 +299,12 @@ class ComplexityTests(unittest.TestCase):
             self.assertEqual(row["test_mae_mean"], "18.0")
             summary = json.loads((profile_dir / "model_complexity_summary.json").read_text())
             self.assertEqual(summary["summaries"][0]["gflops_counted_per_forward"], 1.25)
+            self.assertEqual(summary["profile_environment"][0]["gpu_model"], "test GPU")
+            self.assertEqual(summary["profile_environment"][0]["seed"], 0)
+            self.assertEqual(summary["profile_environment"][0]["batch_sizes"], [1, 64])
+            markdown = (profile_dir / "model_complexity_table.md").read_text()
+            self.assertIn("`profile_environment` in `model_complexity_summary.json`", markdown)
+            self.assertNotIn("See `model_complexity_per_run.csv`", markdown)
             with self.assertRaises(FileExistsError):
                 build_report(mae_dir, profile_dir)
 
@@ -224,6 +335,96 @@ class ComplexityTests(unittest.TestCase):
         self.assertEqual(worker_args.recipe_source, str(args.recipe_path))
         self.assertEqual(worker_args.recipe_digest, "recipe-sha")
         self.assertEqual(worker_args.recipe_source_code_digest, "original-code-sha")
+
+
+class HistoricalModelRegressionTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        directory = tempfile.TemporaryDirectory()
+        cls.addClassCleanup(directory.cleanup)
+        cls.reference_dir = Path(directory.name)
+        for name in REFERENCE_FILES:
+            result = subprocess.run(
+                ["git", "show", f"{REFERENCE_COMMIT}:MAGE_MS/{name}"],
+                cwd=ROOT, capture_output=True, timeout=30,
+            )
+            if result.returncode:
+                raise RuntimeError(
+                    f"Historical regression requires local Git commit {REFERENCE_COMMIT}: "
+                    f"{result.stderr.decode(errors='replace')}"
+                )
+            destination = cls.reference_dir / name
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_bytes(result.stdout)
+
+    def compare_with_reference(self, cases):
+        inputs = self.reference_dir / "cases.pt"
+        outputs = self.reference_dir / "outputs.pt"
+        torch.save(cases, inputs)
+        result = subprocess.run(
+            [sys.executable, "-I", "-c", REFERENCE_RUNNER,
+             str(self.reference_dir), str(inputs), str(outputs)],
+            cwd=self.reference_dir, capture_output=True, text=True, timeout=120,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        expected = torch.load(outputs, map_location="cpu", weights_only=True)
+        self.assertEqual(len(expected), len(cases))
+        for case, predictions in zip(cases, expected):
+            x = case["input"]
+            with contextlib.redirect_stdout(io.StringIO()):
+                model, *_ = train_eval.legacy._build_model(
+                    case["arm"], SimpleNamespace(**case["args"]), x.shape[2], x.shape[3]
+                )
+            model.load_state_dict(case["state"], strict=True)
+            model.eval()
+            for batch, previous in zip((1, 2), predictions):
+                with self.subTest(case=case["name"], batch=batch), torch.inference_mode():
+                    actual = model(x[:batch], bias=case["bias"])
+                    self.assertEqual(tuple(actual.shape), (batch, 12, x.shape[2], 1))
+                    self.assertTrue(torch.isfinite(actual).all())
+                    torch.testing.assert_close(actual, previous, atol=1e-6, rtol=1e-5)
+
+    def test_six_original_arms_match_pinned_commit(self):
+        cases = []
+        with torch.random.fork_rng(devices=[]):
+            torch.manual_seed(2026)
+            x = make_input()
+            for arm in profile_models.DEFAULT_ARMS:
+                args = worker_args(arm)
+                with contextlib.redirect_stdout(io.StringIO()):
+                    model, *_ = train_eval.legacy._build_model(arm, args, 7, 3)
+                cases.append({
+                    "name": arm, "arm": arm, "args": vars(args), "input": x,
+                    "state": model.state_dict(), "bias": torch.linspace(-0.2, 0.2, 12).reshape(3, 4),
+                })
+        self.compare_with_reference(cases)
+
+    def test_saved_seed_zero_checkpoints_match_pinned_commit(self):
+        paths = [
+            (dataset, arm, ROOT / f"results/eval_proposal96/{dataset}_{arm}_s0.pt")
+            for dataset in ("PEMS04", "PEMS08") for arm in profile_models.DEFAULT_ARMS
+        ]
+        required = [path for _, _, path in paths] + [
+            ROOT / "data_proposal96" / dataset / name
+            for dataset in ("PEMS04", "PEMS08")
+            for name in ("his.npz", "idx_train.npy", "idx_val.npy", "idx_test.npy")
+        ]
+        if any(not path.is_file() for path in required):
+            self.skipTest("Trained regression requires all twelve seed-0 checkpoints and prepared PEMS04/08 data")
+        cases, windows = [], {}
+        for dataset, arm, path in paths:
+            checkpoint = torch.load(path, map_location="cpu", weights_only=False)
+            args = SimpleNamespace(**checkpoint["args"])
+            args.data_dir = str(ROOT / "data_proposal96")
+            if dataset not in windows:
+                _, _, windows[dataset] = profile_models._load_profile_inputs(
+                    args, dataset, arm, ROOT / "data_proposal96", 2
+                )
+            cases.append({
+                "name": f"{dataset}/{arm}/s0", "arm": arm, "args": vars(args),
+                "input": windows[dataset], "state": checkpoint["state"], "bias": checkpoint["bias"],
+            })
+        self.compare_with_reference(cases)
 
 
 if __name__ == "__main__":
