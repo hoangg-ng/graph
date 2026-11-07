@@ -1,0 +1,100 @@
+{
+  "selection_method": "best PEMS04 Shared validation MAE, seed 0, ten trials, no test data",
+  "code_digest": "9c47e939b1875807c82f8901b0d3ae2e4541893cdeaa4d922b962a23ca742cc3",
+  "data_digest": "0926882c1bed456e5dddd2811bb29a4f5eb5ea5ebfe02cee319f8dfd432607fb",
+  "selected": {
+    "lr": 0.005,
+    "wd": 0.0001,
+    "dropout": 0.3
+  },
+  "winner": {
+    "trial": 1,
+    "lr": 0.005,
+    "wd": 0.0001,
+    "dropout": 0.3,
+    "val_mae": 18.177692413330078,
+    "epochs_run": 60
+  },
+  "ranking": [
+    {
+      "trial": 1,
+      "lr": 0.005,
+      "wd": 0.0001,
+      "dropout": 0.3,
+      "val_mae": 18.177692413330078,
+      "epochs_run": 60
+    },
+    {
+      "trial": 3,
+      "lr": 0.01,
+      "wd": 0.0001,
+      "dropout": 0.3,
+      "val_mae": 18.203582763671875,
+      "epochs_run": 60
+    },
+    {
+      "trial": 0,
+      "lr": 0.005,
+      "wd": 0.0001,
+      "dropout": 0.1,
+      "val_mae": 18.234508514404297,
+      "epochs_run": 60
+    },
+    {
+      "trial": 2,
+      "lr": 0.01,
+      "wd": 0.0001,
+      "dropout": 0.1,
+      "val_mae": 18.329120635986328,
+      "epochs_run": 60
+    },
+    {
+      "trial": 5,
+      "lr": 0.02,
+      "wd": 0.0001,
+      "dropout": 0.3,
+      "val_mae": 18.58931541442871,
+      "epochs_run": 60
+    },
+    {
+      "trial": 4,
+      "lr": 0.02,
+      "wd": 0.0001,
+      "dropout": 0.1,
+      "val_mae": 18.616668701171875,
+      "epochs_run": 60
+    },
+    {
+      "trial": 6,
+      "lr": 0.01,
+      "wd": 0.001,
+      "dropout": 0.1,
+      "val_mae": 18.79433822631836,
+      "epochs_run": 60
+    },
+    {
+      "trial": 7,
+      "lr": 0.01,
+      "wd": 0.001,
+      "dropout": 0.3,
+      "val_mae": 18.8241024017334,
+      "epochs_run": 60
+    },
+    {
+      "trial": 8,
+      "lr": 0.02,
+      "wd": 0.001,
+      "dropout": 0.1,
+      "val_mae": 19.822967529296875,
+      "epochs_run": 60
+    },
+    {
+      "trial": 9,
+      "lr": 0.02,
+      "wd": 0.001,
+      "dropout": 0.3,
+      "val_mae": 19.86264419555664,
+      "epochs_run": 60
+    }
+  ]
+}
