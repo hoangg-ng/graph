@@ -1,417 +1,426 @@
 # Experiment log: multi-scale MAGE study
 
-The important results, one entry per experiment and oldest first. Full design, tables and discussion are in `research_design.md`. The proposal under test is `proposal.md`.
+**Record updated:** 2026-11-08  
+**Repository branch verified:** `Jiwon-work` (`2c0dbbc110bb9a7f3bba3c2efe746db728ada300`)  
+**Repository:** https://github.com/hoangg-ng/graph
 
-Metric: masked test MAE on traffic flow, mean ± sd over 5 seeds unless stated. "4/5" means better in 4 of 5 seeds, paired by seed. Decision rule throughout: an idea "helps" only with a lower mean **and** ≥ 4/5 seeds better.
+This file records implementations, evaluation protocols, numbers stored in result files, and identified verification limits. It does not assign qualitative ratings to architectures or infer causal effects from non-isolated comparisons.
 
-Code and result files are in `MAGE_MS/`.
+## Recording conventions
+
+- Unless explicitly identified as validation MAE, **MAE means the test-set MAE** stored in the corresponding experiment output. For the newer 96→12 evaluations, this is the masked MAE over finite targets with positive observed flow values.
+- `mean ± SD` is the arithmetic mean and **sample** standard deviation across independent seeds. A single-run value has no reported SD.
+- A signed difference `ΔMAE = MAE(A) − MAE(B)` is negative when A has a lower recorded error. A relative decrease is `(MAE(B) − MAE(A)) / MAE(B) × 100%`. These definitions state arithmetic differences, not statistical significance.
+- `k/n` paired counts the number of seed IDs for which the named first model has lower MAE than the stated comparator. An entry with two seeds is not a five-seed statistic.
+- **Do not pool** the early 12→12 experiments, earlier 96→12 Step-8 experiments, the matched 96→12 test evaluations, and the validation-only Grouped ablations. Their protocol, code version, or split differs.
+- Source files are linked relative to the repository root. Files in `results/` are under `MAGE_MS/results/` unless a full path is shown.
+- Earlier observations are retained as historic entries. Where the underlying result summary was not independently recomputed, the entry says so; file presence alone is not proof of model equivalence.
 
 ---
 
-## 2026-10-18 · Step 1: MAGE reproduction
-- Official MAGE code, 3 seeds: PEMS08 13.95, PEMS04 18.29. Our re-implementation (model 1): 13.96 / 18.25. They match.
-- Paper reports 13.66 / 18.16. On this data copy the official code is 0.1–0.3 worse.
-- Files: `results/logs/PEMS0*_official_s*.log`, `official_repro/experiments/mage/`.
+## 2026-10-18 — Step 1. MAGE reproduction
 
-## 2026-10-18 · Step 2: multi-scale encoder, 12 → 12 (`results/runs/`)
+The prior experiment log recorded three-seed averages for the official MAGE implementation and the local reimplementation:
 
-| # | model | PEMS08 | PEMS04 |
+| Implementation | PEMS08 test MAE | PEMS04 test MAE | Seed count |
 |---|---|---|---|
-| 1 | MAGE (linear encoder) | **13.96 ± 0.03** | 18.25 ± 0.05 |
-| 2 | pooled views → linear | 13.97 ± 0.02 | 18.30 ± 0.06 |
-| 3 | same-size MLP | 13.98 ± 0.04 | **18.21 ± 0.04** |
-| 4 | multi-scale, global gate | 13.98 ± 0.05 | **18.21 ± 0.04** |
-| 5 | multi-scale, per-node gate (proposed) | 14.06 ± 0.02 | 18.25 ± 0.02 |
+| Official implementation | 13.95 | 18.29 | 3 |
+| Local reimplementation (linear encoder) | 13.96 | 18.25 | 3 |
 
-**Verdict:** the encoder does not help.
-- Model 5 vs MAGE: +0.10 on PEMS08 (0/5), a tie on PEMS04.
-- The per-node gate is harmful: 0/10 seeds better against the global gate.
-- Multi-scale structure gives nothing beyond a same-size MLP.
+The original values above are reproduced from the pre-existing log and are rounded to two decimal places; this revision did not independently reconstruct the three official-run averages. The corresponding run records are in `MAGE_MS/official_repro/experiments/mage/` and `MAGE_MS/results/logs/`. Paper-reported values are not mixed with this local reproduction record.
 
-## 2026-10-18 · Step 3: cost (`results/cost_*.json`, `results/logs/cost_*.log`)
-- All variants are linear in N (log-log slope about 0.93). Model 5 costs +9 % time and +8 % memory over MAGE.
-- **Side finding:** the released MAGE einsum is quadratic without `opt_einsum` (slope 1.63, out of memory at 16k nodes). Our contraction order fixes this.
+## 2026-10-18 — Step 2. Temporal encoder comparison (12→12)
 
-## 2026-10-18 · Steps 4–5: routing and regimes (`results/post.json`, `results/post_summary.md`)
-- The encoder does not change graph-expert routing beyond seed noise.
-- No variant improves congestion onset, recovery or congested periods. Model 5 loses exactly there on PEMS04: +0.14 / +0.26 / +0.34, each 0/5.
+- Input: 12 five-minute observations; output: 12 future observations.
+- Data: PEMS04 and PEMS08.
+- The values below are five-seed test-MAE means and SDs from the earlier log and the `results/runs/` output set.
 
-## 2026-10-18 · Error anatomy (`results/diag*.json`)
-- **Measurement noise:** MAGE (12 → 12) is near the estimated noise floor, which is an upper bound on truly irreducible error. The floor is ≈ 12.0 MAE on PEMS08 and ≈ 17.9 on PEMS04.
-- **Large errors dominate:** the top 10 % of errors make up about 40 % of total error.
-- **Neighbours carry some leftover signal:** residuals stay correlated between road neighbours (0.11–0.19) vs random pairs (≤ 0.04).
-- **Upstream sensors lead:** fast variation propagates with about a 5-min lag in free flow. In congestion the peak lag is 0, spreading to negative lags (backward propagation). The 5-min lag may be an aggregation artefact.
+| Encoder | Implementation | PEMS08 test MAE | PEMS04 test MAE |
+|---|---|---|---|
+| `linear` | MAGE linear encoder | 13.96 ± 0.03 | 18.25 ± 0.05 |
+| `mslin` | Pooled temporal views followed by linear projection | 13.97 ± 0.02 | 18.30 ± 0.06 |
+| `m3` | Same-width MLP encoder | 13.98 ± 0.04 | 18.21 ± 0.04 |
+| `m4` | Multiscale encoder with global gate | 13.98 ± 0.05 | 18.21 ± 0.04 |
+| `m5` | Multiscale encoder with node-specific gate | 14.06 ± 0.02 | 18.25 ± 0.02 |
 
-## 2026-10-19 · Step 7: long input windows, 120 runs (`results/long/`)
+Arithmetic differences using the rounded values in this table: `m5 − linear` = +0.10 MAE (PEMS08) and 0.00 MAE (PEMS04); `m5 − m4` = +0.08 MAE (PEMS08) and +0.04 MAE (PEMS04). Exact unrounded differences should be calculated from the per-seed JSON files if required.
 
-| | T | linear MAGE | m3 (MLP) | m4 | m5 |
+Files: `MAGE_MS/results/runs/PEMS{04,08}_T12_*_s{0..4}.json`.
+
+## 2026-10-18 — Step 3. Computational scaling measurements
+
+Source: `MAGE_MS/results/cost_bs16_250-500-1000-2000-4000-8000-16000.json`.
+
+The following entries are recorded values from the `linear` encoder and the two contraction methods. GPU runtime and memory measurements depend on the measurement environment.
+
+| Node count N | Local contraction time (ms) | Local memory (MiB) | Released einsum time (ms) | Released einsum memory (MiB) |
+|---|---|---|---|---|
+| 250 | 19.8647 | 313.0767 | 20.8864 | 282.3149 |
+| 1,000 | 24.5690 | 1,027.8354 | 36.6156 | 1,182.72998 |
+| 8,000 | 165.3036 | 7,604.4902 | 1,083.9945 | 21,624.8604 |
+| 16,000 | 324.9104 | 15,133.2832 | not recorded | not recorded |
+
+The released-einsum experiment has a missing time and memory value at N=16,000; the stored entry does not supply a complete numerical measurement for that configuration. The original log also reported fitted scaling slopes of approximately 0.93 for the local contraction and 1.63 for the released contraction. Those fitted slopes were not recomputed in this revision.
+
+Other source: `MAGE_MS/results/cost_bs64_170-307.json`.
+
+## 2026-10-18 — Steps 4–5. Expert routing and traffic regimes
+
+Source: `MAGE_MS/results/post_summary.md` (`linear`, `mslin`, `m3`, `m4`, `m5`). The following table records selected regime-specific test MAE values and the difference `m5 − linear` using the two-decimal numbers saved in that summary.
+
+| Dataset | Regime | Linear MAE | M5 MAE | ΔMAE (M5−Linear) |
+|---|---|---|---|---|
+| PEMS04 | Congestion onset | 34.64 | 34.79 | +0.15 |
+| PEMS04 | Recovery | 34.01 | 34.27 | +0.26 |
+| PEMS04 | Congested | 35.96 | 36.30 | +0.34 |
+| PEMS08 | Congestion onset | 31.81 | 31.87 | +0.06 |
+| PEMS08 | Recovery | 29.35 | 29.61 | +0.26 |
+| PEMS08 | Congested | 28.12 | 28.37 | +0.25 |
+
+The original `post_summary.md` reports PEMS04 M5-versus-linear paired seed counts of 0/5 for onset, 0/5 for recovery, and 0/5 for congested periods. The displayed difference for PEMS04 onset is +0.15 from the rounded cell values; the source report separately writes **+0.14**, reflecting calculation before display rounding. That rounding discrepancy is retained here instead of treating the displayed subtraction as the original unrounded difference.
+
+The report also stores the Jensen–Shannon divergence (JSD) of global expert usage for `linear` versus `m5` over the three spatial blocks:
+
+| Dataset | Block 1 | Block 2 | Block 3 |
+|---|---|---|---|
+| PEMS04 | 0.0334 | 0.0198 | 0.0334 |
+| PEMS08 | 0.0110 | 0.0225 | 0.0214 |
+
+The original report also contains model-wise routing entropy, expert shares and gate values. No causal relation between routing entropy and forecast error is asserted in this record.
+
+## 2026-10-18 — Error diagnostics
+
+Source files: `MAGE_MS/results/diag.json`, `MAGE_MS/results/diag_space.json`, and `MAGE_MS/results/diag_lag.json`.
+
+| Dataset | MAGE test MAE (diagnostic run) | MAE of 5-seed ensemble | Largest 10% errors: share of total absolute error | Residual correlation: road-neighbor lag 0, horizon 1 | Residual correlation: random pairs lag 0, horizon 1 |
 |---|---|---|---|---|---|
-| PEMS08 | 12 | **13.880** | 13.977 | 13.904 | 13.981 |
-| PEMS08 | 96 | **13.802** | 13.990 | 13.854 | 14.024 |
-| PEMS08 | 288 | **13.774** | 14.345 | 14.129 | 14.157 |
-| PEMS04 | 12 | 18.345 | **18.211** | 18.222 | 18.253 |
-| PEMS04 | 96 | 18.270 | 18.331 | **18.221** | 18.293 |
-| PEMS04 | 288 | **18.248** | 18.795 | 18.590 | 18.649 |
+| PEMS04 | 18.1843 | 18.0621 | 40.72% | 0.1162 | 0.0148 |
+| PEMS08 | 13.9710 | 13.7487 | 39.78% | 0.1094 | 0.0393 |
 
-**Verdict:**
-- **Longer input helps MAGE slightly:** −0.1 MAE.
-- **Multi-scale beats the same-size MLP at T ≥ 96** (5/5), but beats MAGE only on PEMS04 at T = 96 (−0.05, 4/5).
-- **Nonlinear encoders overfit at T = 288.**
-- **Caveat:** linear MAGE hit the 300-epoch cap in most long-window runs.
+The diagnostic files use the earlier experiment implementation. They are not output from the later matched `eval_proposal96` protocol. The stored lag analysis evaluates offsets from −30 to +30 minutes in five-minute increments. The fast-variation cross-correlation arrays have their largest stored value at +5 minutes for both datasets; the sign of a lag follows the original diagnostic script's convention. No irreducible noise-floor estimate is asserted from these outputs.
 
-## 2026-10-27 · Pre-check for the proposal, data only (`results/precheck_hops*.json`)
-- Coarser time scales show stronger correlation between sensors at every road distance, but not a longer reach. The decay shape over 1–8 hops is the same at every scale.
-- After removing the network-wide common signal, correlation fades within about 3 hops (about 1 km) at every scale.
-- **Implication:** scale changes the strength of spatial coupling, not its range.
+## 2026-10-19 — Step 7. Historical window length comparison
 
-## 2026-10-31 · Step 8: proposal.md, scale-dependent spatial mixing (`results/step8/`)
-Setup: PEMS08, 96 → 12. Four scale streams (5 / 10 / 20 / 40 min) share one MAGE graph, and each stream applies P^k.
+- Forecast horizon: 12 steps.
+- Historical input length: 12, 96 or 288 steps.
+- Models: `linear`, `m3`, `m4`, `m5`.
+- Configuration count: 2 datasets × 3 input lengths × 4 encoders × 5 seeds = **120 runs**.
+- Table values: five-seed mean **test MAE** recorded in the prior log and backed by the `MAGE_MS/results/long/` per-run output set.
 
-Unit tests passed:
-- the operator rows sum to 1;
-- factorised powers equal dense powers;
-- the `mage` arm reproduces MAGE exactly;
-- memory is linear in N.
+| Dataset | Input steps | Linear | M3 | M4 | M5 |
+|---|---|---|---|---|---|
+| PEMS08 | 12 | 13.880 | 13.977 | 13.904 | 13.981 |
+| PEMS08 | 96 | 13.802 | 13.990 | 13.854 | 14.024 |
+| PEMS08 | 288 | 13.774 | 14.345 | 14.129 | 14.157 |
+| PEMS04 | 12 | 18.345 | 18.211 | 18.222 | 18.253 |
+| PEMS04 | 96 | 18.270 | 18.331 | 18.221 | 18.293 |
+| PEMS04 | 288 | 18.248 | 18.795 | 18.590 | 18.649 |
 
-| variant | seeds | MAE | vs linear MAGE 13.802 (paired) |
+For PEMS08 linear MAGE, the recorded mean at input length 12 is 13.880 and at input length 288 is 13.774 (difference −0.106). For PEMS04 linear MAGE, the corresponding values are 18.345 and 18.248 (difference −0.097). The earlier log reports that many long-window linear runs reached the maximum 300 training epochs; check each `epochs_run` before attributing a difference to early stopping.
+
+Files: `MAGE_MS/results/long/PEMS{04,08}_T{12,96,288}_{linear,m3,m4,m5}_s{0..4}.json`.
+
+## 2026-10-27 — Spatial correlation pre-check
+
+Source: `MAGE_MS/results/precheck_hops.json` (unadjusted correlations) and `MAGE_MS/results/precheck_hops_nocommon.json` (global/common component removed). Entries below are correlations computed for pairs at the indicated shortest-path hop count; scale factors 1, 2, 4 and 8 correspond to 5-, 10-, 20- and 40-minute sampling.
+
+| Dataset | Processing | Hop distance | Scale ×1 | Scale ×2 | Scale ×4 | Scale ×8 |
+|---|---|---|---|---|---|---|
+| PEMS04 | Unadjusted | 1 | 0.4050 | 0.4823 | 0.5329 | 0.5670 |
+| PEMS04 | Unadjusted | 3 | 0.3352 | 0.3925 | 0.4397 | 0.4758 |
+| PEMS08 | Unadjusted | 1 | 0.2713 | 0.3348 | 0.3746 | 0.4035 |
+| PEMS08 | Unadjusted | 3 | 0.1998 | 0.2450 | 0.2841 | 0.3163 |
+| PEMS04 | Common component removed | 1 | 0.2332 | 0.2852 | 0.3152 | 0.3328 |
+| PEMS04 | Common component removed | 3 | 0.0900 | 0.1075 | 0.1245 | 0.1370 |
+| PEMS08 | Common component removed | 1 | 0.1320 | 0.1634 | 0.1784 | 0.1865 |
+| PEMS08 | Common component removed | 3 | 0.0218 | 0.0262 | 0.0318 | 0.0353 |
+
+The source files contain values for hops 1–8. This table selects hops 1 and 3 for compact presentation; no estimated propagation range is asserted.
+
+## 2026-10-31 — Step 8. Earlier scale-dependent spatial mixing prototype
+
+**Protocol:** PEMS08, 96 input steps → 12 output steps, earlier `main` implementation; four temporal scales (5, 10, 20, 40 minutes). Positive propagation used the earlier lazy operator `P=(I+S₊)/2`, with repeated powers `P^k`. It is not the same operator/protocol as the November `ProposalMAGE` implementation.
+
+**Stored test MAE:**
+
+| Model | Positive-power schedule | Completed seeds | Test MAE mean ± sample SD |
 |---|---|---|---|
-| `mage` (code check) | 1 | 13.736 | seed 0 baseline 13.745 ✓ |
-| Shared (1, 1, 1, 1) | 5 | 13.787 ± 0.086 | −0.015, 3/5 |
-| **Proposed (1, 2, 4, 8)** | 5 | 13.770 ± 0.099 | −0.032, 3/5 |
-| Uniform (global mean) | 2 | 13.962 | +0.21, 0/2 |
-| No spatial mixing | 2 | 13.820 | +0.06, 0/2 |
-| Reversed (8, 4, 2, 1) | – | not run | |
-| Independent | – | not run | |
+| `mage` | MAGE code check | 1 | 13.7358 (seed 0) |
+| `shared` | (1,1,1,1) | 5 | 13.7866 ± 0.0858 |
+| `proposed` | (1,2,4,8) | 5 | 13.7700 ± 0.0986 |
+| `uniform` | Global mean | 2 | 13.9618 ± 0.0084 |
+| `nomix` | No spatial propagation | 2 | 13.8199 ± 0.0047 |
 
-**Verdict:**
-- **Proposed vs Shared:** −0.017, 2/5. The mixing schedule does not matter.
-- **Neither beats MAGE.**
-- **Separate streams vs early merge (Shared vs m4): −0.067, 4/5.** This is the only positive.
-- **Uniform hurts,** so learned structure is needed.
-- **The graph as a whole is worth only about 0.06 MAE** on PEMS08.
-- **Seed variance doubles** (sd 0.09 vs 0.044).
+For the five paired seeds, `proposed − shared` mean test MAE = **−0.0165** and Proposed has a lower MAE in **2/5** paired seeds. The single-seed MAGE code check cannot be interpreted as a five-seed baseline. Reversed and Independent were not present as completed `results/step8/` outputs.
 
-## Not done yet (proposal.md and plan)
-- **proposal.md variants:** Reversed (the key comparison) and Independent.
-- **Primary dataset:** PEMS04, which proposal.md calls primary.
-- **Baselines:** TimeMixer, STID, and MAGE with engineered temporal features.
-- **Metrics:** unmasked versions of all metrics.
-- **Step-8 extras:** the `learned`, `lazy1` and `road` arms, and the operator diagnostics.
-- **Older plan steps:**
-  - model 5 without calendar embeddings;
-  - graph ablation on PEMS04 and at T = 12;
-  - LargeST-SD data and a FaST reproduction;
-  - long-horizon runs;
-  - a full literature check.
+Source: `MAGE_MS/results/step8/PEMS08_T96_*_s*.json`.
 
 ---
 
-## Jiwon-work — Proposal Implementation and Matched Evaluation
+## 2026-11-03 — V1. ProposalMAGE implementation and preprocessing
 
-**Date and source notes:** The November 3 and 5 changes below are verified by GitHub commits on the `Jiwon-work` branch. The November 6 entry is based on the server commands, logs, and partial report shared during the evaluation. The additional matched-evaluation scripts and results have not been verified as committed to GitHub. The original `main` experiment log above is retained unchanged; its "Not done yet" section describes the earlier state of `main`.
+**Code and recorded protocol changes**
 
-### 2026-11-03 · V1: ProposalMAGE and controlled preprocessing
+- Added separate `MAGE_MS/proposal_model.py`, `MAGE_MS/prep_proposal.py`, training/evaluation scripts, and automated tests.
+- Task changed to **96 historical inputs → 12 future targets** at five-minute sampling.
+- Proposal input channels: traffic flow, time-of-day, and day-of-week; the target is traffic flow. Occupancy and speed are not used as proposal input channels.
+- Data boundaries: original timeline split into train/validation/test segments at **60% / 20% / 20%**. A target window belongs only to its designated segment, while its history can include earlier timestamps.
+- Flow normalization parameters are fitted from the training segment and reused for validation and test.
+- Multiscale temporal streams: 96, 48, 24 and 12 steps at the four time resolutions. PDM uses a moving-average trend/seasonal decomposition with 2 mixing blocks, hidden width 16 and kernel 5.
+- Spatial configuration: 3 blocks, 16 learned graph experts, Top-4 routing. The schedule applies to positive spatial operator repetitions; a separate negative operator contribution is also included.
+- Predictions from the four streams are combined after per-stream heads in the non-Grouped variants.
 
-**Starting point:** The team's existing MAGE implementation and earlier multi-scale encoder/stream experiments. The proposal implementation was added separately rather than replacing the original MAGE baseline.
+| Arm | Positive propagation schedule / operator |
+|---|---|
+| `shared` | (1,1,1,1), shared learned operator per block |
+| `proposed` | (1,2,4,8), shared learned operator per block |
+| `reversed` | (8,4,2,1), shared learned operator per block |
+| `independent` | Separate learned spatial expert pools by scale |
+| `uniform` | Global node mean |
 
-**Added / modified — preprocessing**
-- Fixed the forecasting task to **96 historical steps -> 12 future steps** at five-minute sampling intervals.
-- Used **traffic flow + time-of-day + day-of-week** as inputs; removed occupancy and speed from the proposal's inputs. Traffic flow remains the prediction target.
-- Changed the split procedure from a chronological split of sample/end-of-input indices to fixed **60/20/20 boundaries on the original time axis**. All 12 target steps for each sample must fall inside the designated train, validation, or test interval. Historical input windows can extend into a preceding interval.
-- Computed flow mean and standard deviation from the **training time interval only**, applying the same statistics to validation and test.
-- Added `MAGE_MS/prep_proposal.py`, dedicated `data_proposal96` preprocessing, metadata, and tests (`test_proposal_prep.py`).
-- Updated the older `prep.py` to avoid target windows crossing split boundaries and updated `train.py` to compute masked metrics over **finite, strictly positive targets**.
-- Changed the older `streams.py` Uniform variant to use a **pure global mean** instead of retaining a signed-graph contribution; added relevant tests.
+The November code applies direct learned positive operator powers `S₊^k`. The earlier Step-8 prototype applies `(I+S₊)/2` powers. Their MAE tables are kept separate.
 
-**Added / modified — temporal model**
-- Added `MAGE_MS/proposal_model.py` with a separate `ProposalMAGE` implementation.
-- Built four streams by average pooling: **96 / 48 / 24 / 12 steps** (5 / 10 / 20 / 40 minutes).
-- Added **TimeMixer-style Past-Decomposable-Mixing (PDM)**: moving-average trend/seasonal decomposition, seasonal mixing **fine -> coarse**, and trend mixing **coarse -> fine**. This is a TimeMixer-inspired adaptation, **not a reproduction of the complete official TimeMixer architecture**.
-- Initial PDM settings: **2 PDM blocks**, width **16**, and moving-average kernel **5**.
+Code references: `MAGE_MS/prep_proposal.py`, `MAGE_MS/proposal_model.py`, `MAGE_MS/test_proposal.py`, `MAGE_MS/test_proposal_prep.py`.
 
-**Added / modified — spatial model**
-- Used **three spatial blocks**, low-rank learned graph expert pools (**16 experts**), **Top-4 routing**, and a shared fine-scale routing decision across all resolutions within each block.
-- Shared the positive graph operator across temporal resolutions **within each spatial block**, but varied its repeated application count. Each block has its own operator parameters.
-- Implemented five variants:
+Recorded commits: `a235447f1b53a6fab3142ed0ad2a291366671fa8`, `f9bf4ab593bf3186be8190730bd853fada2815b0`.
 
-  | Variant | Positive spatial propagation per scale (fine -> coarse) |
-  |---|---|
-  | Shared | (1, 1, 1, 1) |
-  | Proposed | (1, 2, 4, 8) |
-  | Reversed | (8, 4, 2, 1) |
-  | Independent | Separate expert pool per scale |
-  | Uniform | Global mean mixing |
+## 2026-11-05 — V2. Signed graph operator parameter change
 
-- Applied **direct positive graph propagation** `S_+^k` with a separate negative graph contribution. This differs from the earlier `main` Step-8 **lazy operator** `P^k`, where `P = (I + S_+)/2`.
-- Added a prediction head for each scale and summed the per-scale predictions.
-- Added training/evaluation scripts (`train_proposal.py`, `run_proposal.py`) and model tests (`test_proposal.py`). Kept a **linear-encoder MAGE baseline** for comparisons under the same 96 -> 12 preprocessing protocol; also added an optional MAGE + engineered-temporal-features baseline.
+- The initial ProposalMAGE version reused matrices `E1` and `E2` for the positive and negative graph operators.
+- Commit `4c6854bfa98c2e3830fe82e24c592399e422cf67` separated the matrices for positive and negative operators.
+- Unit tests for operator construction were updated.
+- **Recorded paired MAE comparison with all other settings held fixed:** none in this project log. No numerical before/after model effect is assigned to this change.
 
-**Commits:** [Update MAGE_MS implementation and tests](https://github.com/hoangg-ng/graph/commit/a235447f1b53a6fab3142ed0ad2a291366671fa8); [Add proposal-only MAGE implementation](https://github.com/hoangg-ng/graph/commit/f9bf4ab593bf3186be8190730bd853fada2815b0).
+Sources: `MAGE_MS/proposal_model.py`, `MAGE_MS/test_proposal.py`, repository commit history.
 
-### 2026-11-05 · V2: Separate positive and negative graph expert parameters
+## 2026-11-06 — V3. Hyperparameter selection and scheduled matched evaluation
 
-**Before:** The positive and negative graph operators reused the same factor parameters `E1` and `E2`.
+**Selection:** Ten candidate configurations of PEMS04 Shared (seed 0), evaluated using maximum 60 epochs and patience 15. Selection used validation MAE and did not use the test split.
 
-**Modified**
-- `proposal_model.py`: Introduced **separate `E1` and `E2` matrices** for positive and negative graph operators, allowing them to learn distinct spatial relationships.
-- Continued to apply the **scale-dependent schedule to positive propagation**, while applying negative propagation separately with learned expert-specific coefficients.
-- `test_proposal.py`: Updated operator tests for the separated positive/negative graph parameters.
+| Selected trial | Learning rate | Weight decay | Dropout | Validation MAE | Epochs run |
+|---|---|---|---|---|---|
+| 1 | 0.005 | 0.0001 | 0.3 | 18.1776924 | 60 |
 
-**Added**
-- Preprocessing metadata files for PEMS04 and PEMS08.
+- Selected recipe: `MAGE_MS/results/tune_shared/selected_recipe.json`.
+- Six evaluated variants: MAGE, Shared, Proposed, Reversed, Independent and Uniform.
+- Planned matched run count: **2 datasets × 6 variants × 5 seeds = 60 jobs** (see completed V4 results below).
+- Main training limits: 300 epochs, patience 30, batch size 64; the selected learning rate, decay and dropout above.
+- The original November 6 progress snapshot contained 6/60 completed jobs; this is a historical snapshot and is superseded by the completed results in V4.
 
-**Motivation / limitation:** This corrects the unintended sharing of graph parameters between the two signs. **No isolated before/after MAE experiment was recorded**, so there is no evidence yet that this change alone improves prediction accuracy.
+Source: selected-recipe JSON and `MAGE_MS/run_matched_eval.py`.
 
-**Commit:** [Separate signed graph expert parameters](https://github.com/hoangg-ng/graph/commit/4c6854bfa98c2e3830fe82e24c592399e422cf67).
+## 2026-11-07 — V4. Matched six-model evaluation (60 runs)
 
-### 2026-11-06 · V3: Hyperparameter selection and matched multi-seed evaluation (server-side)
+**Task and sample definition:** PEMS04 and PEMS08, 96→12, same prepared datasets and split, seeds 0–4 per arm. **Metric:** masked test MAE; additional stored metrics include RMSE and MAPE.
 
-**Added / modified — hyperparameter selection**
-- Evaluated **10** candidate hyperparameter settings for the **Shared** variant, using up to **60 epochs** and early-stopping patience **15**.
-- Selected a common recipe: **learning rate 0.005**, **weight decay 0.0001**, and **dropout 0.3**.
-- Selected trial validation MAE: **18.1777**; this is **not a test MAE**.
-- Saved the selected recipe on the server as `results/tune_shared/selected_recipe.json`.
+| Dataset | Arm | Completed | Test MAE mean ± SD | Test RMSE mean | Test MAPE mean (%) |
+|---|---|---|---|---|---|
+| PEMS04 | mage | 5/5 | 18.0921 ± 0.0217 | 29.9090 | 12.2586 |
+| PEMS04 | shared | 5/5 | 18.1479 ± 0.0559 | 29.9452 | 12.3688 |
+| PEMS04 | proposed | 5/5 | 18.1301 ± 0.0704 | 29.9114 | 12.3636 |
+| PEMS04 | reversed | 5/5 | 18.1357 ± 0.0499 | 29.9427 | 12.3537 |
+| PEMS04 | independent | 5/5 | 18.1135 ± 0.0288 | 29.9009 | 12.3217 |
+| PEMS04 | uniform | 5/5 | 17.9985 ± 0.0386 | 29.7470 | 12.3513 |
+| PEMS08 | mage | 5/5 | 13.8126 ± 0.0199 | 23.1668 | 9.1297 |
+| PEMS08 | shared | 5/5 | 13.9298 ± 0.0242 | 23.3731 | 9.2375 |
+| PEMS08 | proposed | 5/5 | 13.9115 ± 0.0309 | 23.3788 | 9.1439 |
+| PEMS08 | reversed | 5/5 | 13.9294 ± 0.0306 | 23.4124 | 9.1962 |
+| PEMS08 | independent | 5/5 | 13.9131 ± 0.0122 | 23.2783 | 9.2087 |
+| PEMS08 | uniform | 5/5 | 13.8273 ± 0.0680 | 23.3020 | 9.0444 |
 
-**Added / modified — matched evaluation**
-- Started **60 independent training jobs**: **2 datasets (PEMS04, PEMS08) x 6 variants (MAGE, Shared, Proposed, Reversed, Independent, Uniform) x 5 seeds (0–4)**.
-- Used a common **96 -> 12 task**, **flow/calendar inputs**, **target-disjoint chronological split**, normalization protocol, and model-independent training settings across variants.
-- Main settings: maximum **300 epochs**, early-stopping patience **30**, up to **4 concurrent GPU processes** (one per GPU, three CPU threads per process).
-- Used server-side `run_matched_eval.py` and `report_matched_eval.py` to schedule runs, record results, and generate paired-seed comparisons and Markdown/CSV summaries. The helper scripts and result files have **not been confirmed as pushed to GitHub**.
-- Result location: `results/eval_proposal96` on the server.
-
-**Preliminary PEMS04 results — snapshot when 6/60 jobs had finished**
-
-| Variant | Completed seeds | Masked test MAE |
-|---|---:|---:|
-| MAGE | 2/5 | 18.093 +/- 0.016 |
-| Shared (1,1,1,1) | 1/5 | 18.118 |
-| Proposed (1,2,4,8) | 1/5 | 18.171 |
-| Reversed (8,4,2,1) | 1/5 | 18.132 |
-| Independent | 1/5 | 18.095 |
-| Uniform | 0/5 | Pending |
-
-- MAGE seed 0: **test MAE 18.1038**, best validation MAE **18.125**, early stopped at epoch **132**.
-- In the only complete paired seed, **Proposed did not beat MAGE, Shared, or Reversed**. Independent was slightly better than MAGE in that seed.
-- At this snapshot, **PEMS08 had 0/30 completed** and **54/60 jobs were still outstanding**. This is a historical snapshot, **not a live progress update**.
-- **Do not interpret partial results as five-seed averages or conclude that a variant wins/loses overall yet.**
-
-**Comparability note:** The original MAGE paper's **12 -> 12** results, the earlier team's experiments using **different features/splits/operators**, and the current **flow-only matched 96 -> 12** results are distinct evaluation protocols; their absolute MAE values must not be treated as matched comparisons.
-
-
-### 2026-11-07 · V4: Completed matched evaluation (60 runs)
-
-**Status:** The server-side matched evaluation is reported as completed. The results below are based on the five-seed evaluation summary. Individual training result JSONs and checkpoints remain on the server and are not committed to GitHub.
-
-**Experimental protocol**
-- Datasets: PEMS04 and PEMS08.
-- Input/output: **96 historical steps → 12 future steps** (5-minute sampling).
-- Variants: MAGE, Shared, Proposed, Reversed, Independent, and Uniform.
-- Seeds: **0–4** for each variant and dataset.
-- Total: **2 datasets × 6 variants × 5 seeds = 60 runs**.
-- Shared configuration: learning rate **0.005**, weight decay **0.0001**, dropout **0.3**, batch size **64**, maximum **300 epochs**, and early-stopping patience **30**.
-- Primary metric: masked test MAE; lower is better.
-- Result directory: `MAGE_MS/results/eval_proposal96/`.
-
-**Matched test MAE (mean ± SD, 5 seeds)**
-
-| Variant | PEMS04 | PEMS08 |
-|---|---:|---:|
-| MAGE | 18.092 ± 0.022 | **13.813 ± 0.020** |
-| Shared (1,1,1,1) | 18.148 ± 0.056 | 13.930 ± 0.024 |
-| Proposed (1,2,4,8) | 18.130 ± 0.070 | 13.911 ± 0.031 |
-| Reversed (8,4,2,1) | 18.136 ± 0.050 | 13.929 ± 0.031 |
-| Independent | 18.114 ± 0.029 | 13.913 ± 0.012 |
-| Uniform | **17.998 ± 0.039** | 13.827 ± 0.068 |
-
-**Findings**
-- Proposed achieved slightly lower mean MAE than Shared and Reversed on both datasets.
-- These reductions were below the prespecified **1% mean MAE improvement threshold**. The original support criterion was therefore not satisfied.
-- Proposed performed worse than MAGE on both datasets.
-- Uniform achieved the lowest mean MAE on PEMS04; MAGE achieved the lowest on PEMS08.
-- The results do not establish a forecasting advantage from assigning more positive spatial propagation steps to coarser temporal resolutions.
-- Results from the earlier `main` Step-8 experiments must not be pooled with these results because their model implementations and evaluation protocols differ.
-
-**Related evaluation files**
-- `MAGE_MS/run_matched_eval.py`
-- `MAGE_MS/report_matched_eval.py`
-- `MAGE_MS/results/eval_proposal96/matched_mae_table.md`
-- `MAGE_MS/results/eval_proposal96/matched_mae_summary.csv`
-- `MAGE_MS/results/eval_proposal96/matched_mae_per_seed.csv`
-
-
-
-### 2026-11-07 · V7: Completed follow-up MAE evaluation and computational profiling
-
-**Status:** The follow-up evaluation is complete, with 40 additional training runs. Together with the original 60 matched runs, the study now contains **100 training runs across 10 model variants**. Computational profiling was performed separately using saved seed-0 checkpoints.
-
-#### Experimental setup
-
-- **Datasets:** PEMS04 and PEMS08.
-- **Forecasting task:** 96 historical steps → 12 future steps, with five-minute sampling.
-- **Original evaluation:** 6 variants × 2 datasets × 5 seeds = 60 runs.
-- **Follow-up evaluation:** 4 variants × 2 datasets × 5 seeds = 40 runs.
-- **Seeds:** 0–4.
-- **Hyperparameters:** Learning rate 0.005, weight decay 0.0001, dropout 0.3.
-- **Training:** Maximum 300 epochs, early-stopping patience 30, batch size 64.
-- **Primary metric:** Masked test MAE, reported as mean ± sample standard deviation.
-- **Computational profiling:** Seed-0 checkpoint per model and dataset, with inference batch sizes 1 and 64.
-
-#### Final matched MAE results
-
-The following table combines the original evaluation with the completed follow-up evaluation.
-
-| Model | PEMS04 MAE | PEMS08 MAE |
-|---|---:|---:|
-| MAGE | 18.092 ± 0.022 | 13.813 ± 0.020 |
-| Shared (1,1,1,1) | 18.148 ± 0.056 | 13.930 ± 0.024 |
-| Proposed (1,2,4,8) | 18.130 ± 0.070 | 13.911 ± 0.031 |
-| Reversed (8,4,2,1) | 18.136 ± 0.050 | 13.929 ± 0.031 |
-| Independent | 18.114 ± 0.029 | 13.913 ± 0.012 |
-| Uniform | 17.998 ± 0.039 | 13.827 ± 0.068 |
-| `mage_features` | 18.0183 ± 0.0217 | 13.7602 ± 0.0146 |
-| `no_spatial` | 18.2481 ± 0.0354 | 13.8168 ± 0.0313 |
-| **`grouped`** | **17.8589 ± 0.0211** | **13.6781 ± 0.0369** |
-| `proposed_no_pdm` | 18.0497 ± 0.0300 | 13.8876 ± 0.0320 |
-
-**Accuracy findings**
-
-- **Grouped achieved the lowest mean test MAE on both datasets** among all ten evaluated variants.
-- Relative to the original Proposed model, Grouped reduced mean MAE by approximately **1.50% on PEMS04** and **1.67% on PEMS08**.
-- Relative to the strongest original model on each dataset, Grouped reduced mean MAE by approximately **0.77% on PEMS04** (versus Uniform) and **0.98% on PEMS08** (versus MAGE).
-- The engineered-feature MAGE baseline also improved over the original MAGE baseline on both datasets.
-- No-Spatial performed worse than Grouped on both datasets, suggesting that learned spatial propagation can remain useful after multiscale temporal representations are combined.
-- Proposed-No-PDM outperformed Proposed on PEMS04 but underperformed it on PEMS08. The available results do not establish a consistent benefit or disadvantage from removing PDM.
-- The original hypothesis that increasing spatial propagation strength at coarser temporal resolutions improves forecasting was **not supported by the prespecified decision criterion**.
-
-**Interpretation**
-
-Grouped combines four PDM-derived temporal representations into a single representation **before spatial processing**. In contrast, Proposed applies scale-dependent spatial propagation to four separate streams and combines their predictions afterward.
-
-The results suggest that early integration of multiscale temporal representations may be a more effective architectural choice than separate scale-dependent spatial propagation.
-
-However, Grouped also changes the number of spatial streams, prediction heads, parameter count, and propagation operations. Therefore, the observed improvement cannot be attributed exclusively to the temporal fusion order.
-
-#### Computational profiling: follow-up variants
-
-The following measurements were obtained from saved seed-0 checkpoints. FLOPs are the operations counted by the PyTorch profiler, not necessarily every operation performed by the model.
-
-| Dataset | Variant | Params (M) | Counted GFLOPs | Graph apps (+/−) | Latency B=1 (ms) | Throughput B=64 (samples/s) |
-|---|---|---:|---:|---:|---:|---:|
-| PEMS04 | `grouped` | 3.056 | 1.6528 | 3/3 | 3.815 | 1746.5 |
-| PEMS04 | `mage_features` | 2.765 | 0.9412 | Not comparable | 2.270 | 7714.1 |
-| PEMS04 | `no_spatial` | 1.103 | 2.2152 | 0/0 | 3.748 | 1462.5 |
-| PEMS04 | `proposed_no_pdm` | 2.594 | 6.0576 | 45/12 | 8.180 | 1557.8 |
-| PEMS08 | `grouped` | 2.197 | 0.9152 | 3/3 | 3.860 | 3034.1 |
-| PEMS08 | `mage_features` | 1.906 | 0.5212 | Not comparable | 2.206 | 12367.7 |
-| PEMS08 | `no_spatial` | 1.085 | 1.2267 | 0/0 | 3.717 | 2591.9 |
-| PEMS08 | `proposed_no_pdm` | 1.735 | 3.3543 | 45/12 | 7.994 | 2557.5 |
-
-**Computational findings**
-
-- Grouped uses **6 total graph applications per forward pass**, compared with 57 for Proposed-No-PDM.
-- Grouped has lower counted GFLOPs than No-Spatial and Proposed-No-PDM despite using learned spatial propagation.
-- Grouped requires approximately **72.7% fewer counted FLOPs** than Proposed-No-PDM on both datasets.
-- However, MAGE + Features is computationally more efficient than Grouped in the reported measurements.
-- On PEMS04, Grouped has approximately **1.76× the counted GFLOPs** and **1.68× the batch-1 inference latency** of MAGE + Features.
-- On PEMS08, the corresponding ratios are approximately **1.76×** and **1.75×**.
-- Grouped therefore provides the best observed predictive accuracy, while MAGE + Features provides a favorable accuracy-efficiency alternative.
-
-### 2026-11-08 · V8: Controlled Grouped Ablation Study
-
-**Objective:** Identify the contribution of PDM and learned spatial propagation to the Grouped architecture, following the completed 100-run evaluation.
-
-#### Experimental setup
-
-The ablation study introduced three variants of the existing Grouped model:
-
-| Variant | Modification | Purpose |
+| Comparison A−B | PEMS04 ΔMAE | PEMS08 ΔMAE |
 |---|---|---|
-| `grouped_no_pdm` | Replace PDM with independent linear encoders for each temporal scale | Evaluate the contribution of PDM |
-| `grouped_no_spatial` | Remove cross-node spatial propagation while retaining temporal processing, spatial prompts, and FFN layers | Evaluate the contribution of learned spatial propagation |
-| `grouped_uniform` | Replace learned spatial propagation with global-mean mixing | Compare learned spatial relationships with simple global mixing |
+| Proposed − Shared | -0.0177 | -0.0183 |
+| Proposed − Reversed | -0.0056 | -0.0179 |
+| Proposed − MAGE | +0.0381 | +0.0988 |
 
-All variants retain four temporal resolutions (5, 10, 20, and 40 minutes), early temporal representation fusion, and a single prediction head.
+Source files: `MAGE_MS/results/eval_proposal96/` (60 per-seed JSON files), `matched_mae_summary.csv`, `matched_mae_per_seed.csv`, and `matched_mae_table.md`.
 
-**Experimental protocol**
-- Datasets: PEMS04 and PEMS08
-- Input/output: 96 historical steps → 12 future steps
-- Sampling interval: 5 minutes
-- Seeds: 0–4 for Grouped and Grouped-No-PDM; 0–1 for the spatial ablations
-- Learning rate: 0.005
-- Weight decay: 0.0001
-- Dropout: 0.3
-- Batch size: 64
-- Maximum epochs: 300
-- Early-stopping patience: 30
-- Selection metric: Best validation MAE
-- Evaluation mode: Validation-only; no test-set evaluation
+The original prespecified comparison used a **1% reduction in mean test MAE** with at least **4/5 paired-seed wins** as its decision rule. The report gives Proposed vs MAGE as **1/5** (PEMS04) and **0/5** (PEMS08). These counts are a documented criterion and observed counts, not an independent significance test.
 
-**Completed training runs**
-- Initial ablations: 4 variants × 2 datasets × 2 seeds = 16 runs
-- Additional PDM ablations: 2 variants × 2 datasets × 3 seeds = 12 runs
-- Total: **28 new training runs**
-- Cumulative experiments: **100 earlier test-evaluation runs + 28 validation-only runs = 128 training runs**
+## 2026-11-07 — V5–V6. Follow-up variants and profiling implementation
 
-#### 1. PDM ablation: Five-seed validation results
+The earlier implementation record described these additions:
 
-| Dataset | Grouped (mean ± SD) | Grouped-No-PDM (mean ± SD) | Relative improvement | Paired wins |
-|---|---:|---:|---:|---:|
-| PEMS04 | **17.9618 ± 0.0181** | 18.0245 ± 0.0159 | −0.35% | 0/5 |
-| PEMS08 | 13.8996 ± 0.0416 | **13.8717 ± 0.0547** | +0.20% | 3/5 |
+| Variant | Recorded implementation |
+|---|---|
+| `mage_features` | MAGE with moving averages, first differences and time-of-day features constructed within historical windows |
+| `no_spatial` | Four temporal streams without learned cross-node propagation |
+| `grouped` | Four PDM-derived representations concatenated/projected before one spatial stream and one output head |
+| `proposed_no_pdm` | Independent linear encoders substituted for the PDM temporal modules in the Proposed architecture |
 
-**Findings**
+| Implementation | Positive graph operator applications | Negative graph operator applications |
+|---|---|---|
+| Shared | 12 | 12 |
+| Proposed | 45 | 12 |
+| Reversed | 45 | 12 |
+| Independent | 12 | 12 |
+| Uniform | 0 | 0 |
+| No-Spatial | 0 | 0 |
+| Grouped | 3 | 3 |
+| Proposed-No-PDM | 45 | 12 |
 
-- On PEMS04, removing PDM increased mean validation MAE by approximately 0.0627, corresponding to a 0.35% deterioration. The original Grouped model outperformed Grouped-No-PDM across all five paired seeds.
-- On PEMS08, Grouped-No-PDM reduced mean validation MAE by approximately 0.0279 (0.20%), but achieved better results in only three of five seeds.
-- The PEMS08 result does not satisfy the previously adopted four-of-five-seeds consistency criterion.
-- The contribution of PDM therefore appears dependent on the dataset. The results do not support removing PDM universally.
+The operator counts describe `ProposalMAGE` factorized operator calls in one model forward pass; the native MAGE implementation is not counted by the same method. Separate versions of the original code are documented by the source fingerprints in the result JSON files.
 
-#### 2. Spatial ablation: Two-seed validation results
+Files introduced or used: `MAGE_MS/profile_models.py`, `MAGE_MS/report_complexity.py`, `MAGE_MS/test_complexity.py`, `MAGE_MS/run_followup_eval.py`.
 
-| Variant | PEMS04 (mean ± SD) | PEMS08 (mean ± SD) |
-|---|---:|---:|
-| `grouped` | **17.9553 ± 0.0088** | **13.9073 ± 0.0257** |
-| `grouped_no_spatial` | 18.1361 ± 0.0104 | 13.9705 ± 0.0669 |
-| `grouped_uniform` | 18.0745 ± 0.0804 | 14.0398 ± 0.0166 |
+Recorded implementation commits: `b77d1623c42aec782b78088daa1ffd237025445c`, `3cd4007377b1892f3ed65992d7732feeffc32785`, `dac6bbef9f893557dfaa7b8045c83ba5a89b73e8`, `ffd5d33357182cbab40e6fdbfb72b32cf11710d4`.
 
-**Findings**
+The follow-up run plan was **4 variants × 2 datasets × 5 seeds = 40 jobs**. Its completion is recorded in V7.
 
-- Removing spatial propagation increased mean validation MAE by approximately 1.01% on PEMS04 and 0.45% on PEMS08.
-- Replacing the learned spatial operator with global-mean mixing increased mean validation MAE by approximately 0.66% on PEMS04 and 0.95% on PEMS08.
-- Grouped outperformed both spatial ablations in all paired two-seed comparisons on both datasets.
-- These results provide preliminary evidence that learned spatial propagation contributes to the predictive performance of Grouped.
-- However, the ablations also alter the number of model parameters. The contribution of spatial propagation has not been isolated under matched model capacity.
+## 2026-11-07 — V7. Follow-up four-model evaluation (40 runs)
 
-#### 3. Interpretation
+**Evaluation:** PEMS04 and PEMS08, 96→12, 5 seeds (0–4) for each of `mage_features`, `no_spatial`, `grouped`, and `proposed_no_pdm`. The same selected Shared hyperparameter recipe was used; output source fingerprints are stored separately from the initial 60-run set.
 
-The original proposal hypothesized that coarser temporal resolutions would benefit from stronger spatial propagation. Earlier experiments did not demonstrate a substantial or consistent advantage from this design.
+| Dataset | Arm | Completed | Masked test MAE mean ± SD |
+|---|---|---|---|
+| PEMS04 | mage_features | 5/5 | 18.0183 ± 0.0217 |
+| PEMS04 | no_spatial | 5/5 | 18.2481 ± 0.0354 |
+| PEMS04 | grouped | 5/5 | 17.8589 ± 0.0211 |
+| PEMS04 | proposed_no_pdm | 5/5 | 18.0497 ± 0.0300 |
+| PEMS08 | mage_features | 5/5 | 13.7602 ± 0.0146 |
+| PEMS08 | no_spatial | 5/5 | 13.8168 ± 0.0313 |
+| PEMS08 | grouped | 5/5 | 13.6781 ± 0.0369 |
+| PEMS08 | proposed_no_pdm | 5/5 | 13.8876 ± 0.0320 |
 
-Subsequently, Grouped achieved the lowest test MAE among the ten previously evaluated variants by combining multiscale temporal representations before spatial processing.
+| Comparison A−B | PEMS04 Δ test MAE | PEMS08 Δ test MAE |
+|---|---|---|
+| Grouped − MAGE | -0.2332 | -0.1345 |
+| Grouped − Proposed | -0.2713 | -0.2334 |
+| Proposed-No-PDM − Proposed | -0.0804 | -0.0239 |
+| Grouped − MAGE+Features | -0.1594 | -0.0821 |
 
-The present ablation study provides additional information about that architecture:
+Relative MAE difference for Grouped versus MAGE, computed from these rounded/stored means: **−1.29% on PEMS04** and **−0.97% on PEMS08**, where the signed percentage is `(Grouped−MAGE)/MAGE × 100`. The 1.5% relative reduction target is a separate prespecified threshold; these observed percentages are listed without a qualitative classification.
 
-1. PDM is beneficial for Grouped on PEMS04 under the validation protocol, but its contribution on PEMS08 is inconclusive.
-2. Removing learned spatial propagation or replacing it with global-mean mixing degrades validation performance in the two-seed comparisons.
-3. The advantage of Grouped cannot yet be attributed exclusively to early temporal fusion because Grouped also changes the number of spatial processing streams, propagation operations, residual pathways, and prediction heads.
+The November 7 follow-up report records **40/40 completed**, and the original matched report records **60/60 completed**. Together, these two **matched 96→12 test-evaluation stages** contain 100 training jobs. Earlier historical encoder and long-window studies are **not** included in this subtotal.
 
-#### 4. Limitations
+Sources: `MAGE_MS/results/eval_followup96/followup_mae_interim.md`, `MAGE_MS/results/eval_followup96/PEMS*.json`, and V4 source files.
 
-- The new ablation results are based on validation MAE, whereas the previous main experiments reported test MAE. The two sets of results must not be directly compared as identical evaluation outcomes.
-- Grouped and Grouped-No-PDM were evaluated with five seeds; Grouped-No-Spatial and Grouped-Uniform were evaluated with only two seeds.
-- Differences in parameter count remain a possible confounding factor for the spatial ablations.
-- Statistical significance and generalization to other datasets have not been established.
-- The earlier 1.5% test-MAE improvement target relative to MAGE has not yet been achieved on both datasets.
-- 
-**Conclusion:** The results favor retaining learned spatial propagation in the Grouped architecture. PDM contributes differently across PEMS04 and PEMS08 and requires further analysis. Future work will prioritize isolating the effects of temporal fusion and prediction-head design rather than further increasing scale-dependent spatial propagation depth.
+### 2026-11-07 — Seed-0 computational profiles for the 10 models
 
-#### Result locations
+- One seed-0 checkpoint was profiled per model and dataset.
+- Counted FLOPs are the operations supported by the selected PyTorch counting methods; the count does **not** include every possible operator.
+- Latency is the reported median single-item inference latency (batch size 1). Throughput is samples per second at batch size 64.
+- GPU device, CUDA/PyTorch versions, precision flags and warm-up details are stored in the per-profile outputs.
 
-- `MAGE_MS/results/ablation_val96/`
-- `MAGE_MS/results/ablation_val96_s234/`
-- `MAGE_MS/results/ablation_val96_5seed/`
-- `MAGE_MS/proposal_model.py`
-- `MAGE_MS/run_ablation_eval.py`
-- `MAGE_MS/test_grouped_ablation.py`
-- `MAGE_MS/report_grouped_ablation.py`
+| Dataset | Model | Checkpoint set | Params (M) | Counted GFLOPs | Graph calls (+/−) | Latency B=1 (ms) | Throughput B=64 (samples/s) |
+|---|---|---|---|---|---|---|---|
+| PEMS04 | mage | original | 2.703 | 0.9035 | not comparable | 2.293 | 7939.5 |
+| PEMS04 | shared | original | 2.995 | 4.1505 | 12/12 | 7.107 | 1157.7 |
+| PEMS04 | proposed | original | 2.995 | 6.8063 | 45/12 | 9.620 | 915.6 |
+| PEMS04 | reversed | original | 2.995 | 6.8063 | 45/12 | 9.655 | 914.0 |
+| PEMS04 | independent | original | 8.654 | 4.1505 | 12/12 | 7.117 | 1153.7 |
+| PEMS04 | uniform | original | 1.103 | 2.2152 | 0/0 | 3.811 | 1469.5 |
+| PEMS04 | mage_features | follow-up | 2.765 | 0.9412 | not comparable | 2.270 | 7714.1 |
+| PEMS04 | no_spatial | follow-up | 1.103 | 2.2152 | 0/0 | 3.748 | 1462.5 |
+| PEMS04 | grouped | follow-up | 3.056 | 1.6528 | 3/3 | 3.815 | 1746.5 |
+| PEMS04 | proposed_no_pdm | follow-up | 2.594 | 6.0576 | 45/12 | 8.180 | 1557.8 |
+| PEMS08 | mage | original | 1.844 | 0.5003 | not comparable | 2.187 | 12623.7 |
+| PEMS08 | shared | original | 2.136 | 2.2983 | 12/12 | 7.003 | 1989.3 |
+| PEMS08 | proposed | original | 2.136 | 3.7689 | 45/12 | 9.413 | 1556.4 |
+| PEMS08 | reversed | original | 2.136 | 3.7689 | 45/12 | 9.469 | 1554.9 |
+| PEMS08 | independent | original | 5.269 | 2.2983 | 12/12 | 7.029 | 1989.6 |
+| PEMS08 | uniform | original | 1.085 | 1.2267 | 0/0 | 3.829 | 2596.3 |
+| PEMS08 | mage_features | follow-up | 1.906 | 0.5212 | not comparable | 2.206 | 12367.7 |
+| PEMS08 | no_spatial | follow-up | 1.085 | 1.2267 | 0/0 | 3.717 | 2591.9 |
+| PEMS08 | grouped | follow-up | 2.197 | 0.9152 | 3/3 | 3.860 | 3034.1 |
+| PEMS08 | proposed_no_pdm | follow-up | 1.735 | 3.3543 | 45/12 | 7.994 | 2557.5 |
 
-The experimental code and results are maintained separately from the original MAGE implementation.
+**Source fingerprints during profiling:** The six original variants were trained under code digest `9c47e939b1875807c82f8901b0d3ae2e4541893cdeaa4d922b962a23ca742cc3`; the original profile report records **12/12 code-digest mismatches** between training checkpoint and profile source digest `4d4fd58b70ee7116ebe107603bb11e80ee85b45113ac68128decd27f15b2bca0`. The follow-up profile report records **0** such mismatches. Both reports record that the data/split fingerprint check passed. A source digest mismatch is a recorded discrepancy; functional equivalence has not been established by the digest comparison alone.
+
+Source reports:
+- `MAGE_MS/results/complexity_original_v1/model_complexity_table.md` and `model_complexity_summary.json`.
+- `MAGE_MS/results/complexity_followup_v1/model_complexity_table.md` and `model_complexity_summary.json`.
+
+These are profiler measurements for saved seed-0 checkpoints; they are **not five-seed mean runtime profiles**.
+
+## 2026-11-08 — V8. Grouped component ablation (validation only; 28 runs)
+
+**New model arms and definitions**
+
+| Arm | Temporal processing | Spatial processing | Output heads |
+|---|---|---|---|
+| `grouped` | Four PDM-derived streams, fused before spatial block | Learned positive/negative operators | 1 |
+| `grouped_no_pdm` | Four independent linear scale encoders, fused before spatial block | Learned positive/negative operators | 1 |
+| `grouped_no_spatial` | Four PDM-derived streams, fused before spatial block | No learned cross-node operator; node embeddings/prompts and feed-forward processing remain | 1 |
+| `grouped_uniform` | Four PDM-derived streams, fused before spatial block | Global node-average mixing instead of learned graph | 1 |
+
+**Training/evaluation protocol**: PEMS04 and PEMS08; 96 input → 12 output steps; 5-minute base interval; 4 temporal resolutions (5, 10, 20, 40 minutes); 300 maximum epochs, patience 30, batch size 64; learning rate 0.005, weight decay 0.0001, dropout 0.3; TF32=0. The experiment runner sets `validation_only=true`, result protocol `96to12_v1_validation_only`; no test-set error is recorded in these new runs.
+
+- Phase A: four arms × two datasets × seeds 0 and 1 = **16 completed** JSON jobs; source `MAGE_MS/results/ablation_val96/`.
+- Phase B: Grouped and Grouped-No-PDM × two datasets × seeds 2, 3 and 4 = **12 completed** JSON jobs; source `MAGE_MS/results/ablation_val96_s234/`.
+- The `ablation_val96_5seed/` directory contains the **five-seed summary Markdown**, not another 20 unique new training jobs.
+- All 28 individual JSON files report `completed=true`, code digest `34afb5738dfd08069551c6c8efd09dc314b46b5f9731ecb4a54915921e63c9cc`, and recipe digest `16b0eb133418cfc264306a6e1380d713c39ec6cf8ecbd6fc714a0ab37881e31f`.
+- Dataset digest: PEMS04 `0926882c1bed456e5dddd2811bb29a4f5eb5ea5ebfe02cee319f8dfd432607fb`; PEMS08 `a537342a659680fedae25b300def0cd82a94fcc3e42f482a609bb1efac685014`.
+
+### V8.1 Five-seed Grouped versus No-PDM — per-seed best validation MAE
+
+| Dataset | Seed | Grouped | Grouped-No-PDM | ΔMAE (No-PDM−Grouped) |
+|---|---|---|---|---|
+| PEMS04 | 0 | 17.949080 | 18.022705 | +0.073625 |
+| PEMS04 | 1 | 17.961552 | 18.049345 | +0.087793 |
+| PEMS04 | 2 | 17.983175 | 18.010174 | +0.026999 |
+| PEMS04 | 3 | 17.939528 | 18.028364 | +0.088836 |
+| PEMS04 | 4 | 17.975574 | 18.011684 | +0.036110 |
+| PEMS08 | 0 | 13.925466 | 13.790399 | -0.135067 |
+| PEMS08 | 1 | 13.889094 | 13.904367 | +0.015273 |
+| PEMS08 | 2 | 13.832620 | 13.925567 | +0.092947 |
+| PEMS08 | 3 | 13.938129 | 13.842965 | -0.095164 |
+| PEMS08 | 4 | 13.912772 | 13.895152 | -0.017620 |
+
+| Dataset | Grouped, mean ± SD | Grouped-No-PDM, mean ± SD | ΔMAE (No-PDM−Grouped) | No-PDM paired lower-MAE seeds |
+|---|---|---|---|---|
+| PEMS04 | 17.9618 ± 0.0181 | 18.0245 ± 0.0159 | +0.0627 | 0/5 |
+| PEMS08 | 13.8996 ± 0.0416 | 13.8717 ± 0.0547 | -0.0279 | 3/5 |
+
+The calculations in the preceding tables use six-decimal display values transcribed from 28 JSON records. The repository five-seed report uses the original unrounded floats and reports PEMS04 17.9618 ± 0.0181 versus 18.0245 ± 0.0159 (No-PDM relative improvement −0.35%, 0/5 paired lower-MAE seeds) and PEMS08 13.8996 ± 0.0416 versus 13.8717 ± 0.0547 (+0.20%, 3/5 paired lower-MAE seeds). Minor last-digit differences can arise when calculating from six-decimal values.
+
+### V8.2 Two-seed spatial ablations — best validation MAE
+
+| Dataset | Arm | n | Validation MAE mean ± SD | ΔMAE vs 2-seed Grouped | Paired lower-MAE count vs Grouped |
+|---|---|---|---|---|---|
+| PEMS04 | grouped | 2 | 17.9553 ± 0.0088 | - | - |
+| PEMS04 | grouped_no_spatial | 2 | 18.1361 ± 0.0104 | +0.1808 | 0/2 |
+| PEMS04 | grouped_uniform | 2 | 18.0745 ± 0.0804 | +0.1192 | 0/2 |
+| PEMS08 | grouped | 2 | 13.9073 ± 0.0257 | - | - |
+| PEMS08 | grouped_no_spatial | 2 | 13.9705 ± 0.0669 | +0.0632 | 0/2 |
+| PEMS08 | grouped_uniform | 2 | 14.0398 ± 0.0166 | +0.1325 | 0/2 |
+
+The signed differences in this table are computed from the means rounded to four decimals as displayed. Grouped uses **only seeds 0–1** here, not its five-seed mean. Differences computed directly from unrounded per-seed JSON floats can differ by 0.0001 after final rounding.
+
+### V8.3 Model parameters recorded in validation JSON
+
+| Arm | PEMS04 parameters | PEMS08 parameters |
+|---|---|---|
+| `grouped` | 3,056,156 | 2,196,892 |
+| `grouped_no_pdm` | 2,655,084 | 1,795,820 |
+| `grouped_no_spatial` | 1,163,708 | 1,146,172 |
+| `grouped_uniform` | 1,163,708 | 1,146,172 |
+
+The spatial arms differ from Grouped in parameter count as well as the spatial operation. These comparisons do not keep trainable parameter count constant. No hypothesis-test p-values or confidence intervals are recorded for V8.
+
+Files: `MAGE_MS/results/ablation_val96/ablation_best_val_mae_summary.md`, `MAGE_MS/results/ablation_val96_5seed/ablation_best_val_mae_summary.md`, `MAGE_MS/results/ablation_val96/ablation_manifest.json`, `MAGE_MS/results/ablation_val96_s234/ablation_manifest.json` and the per-seed JSONs.
+
+**Validation–test distinction:** Grouped test MAE from V7 is 17.8589 (PEMS04) and 13.6781 (PEMS08); Grouped *best validation* MAE from V8 is 17.9618 and 13.8996, respectively. The V7 and V8 numbers have different evaluation partitions and must not be subtracted as model comparisons.
+
+---
+
+## Reproducibility status and file inventory (as of 2026-11-08)
+
+| Evaluation stage | Datasets | Models / settings | Seeds per setting | Recorded jobs | Metric | Result directory |
+|---|---|---|---|---|---|---|
+| Early 12→12 encoder study | PEMS04, PEMS08 | 5 encoder variants | 5 | 50 | Test MAE | `MAGE_MS/results/runs/` |
+| Long-input study | PEMS04, PEMS08 | 4 encoders × 3 input lengths | 5 | 120 | Test MAE | `MAGE_MS/results/long/` |
+| Earlier Step-8 prototype | PEMS08 | MAGE (1 seed), Shared (5), Proposed (5), Uniform (2), No-mix (2) | varying | 15 | Test MAE | `MAGE_MS/results/step8/` |
+| Matched ProposalMAGE | PEMS04, PEMS08 | 6 variants | 5 | 60 | Masked test MAE | `MAGE_MS/results/eval_proposal96/` |
+| Follow-up models | PEMS04, PEMS08 | 4 variants | 5 | 40 | Masked test MAE | `MAGE_MS/results/eval_followup96/` |
+| Grouped validation ablation | PEMS04, PEMS08 | 4 arms × 2 seeds + 2 arms × 3 more seeds | 2 or 5 | 28 | Best validation MAE | `MAGE_MS/results/ablation_val96*/` |
+
+- These counts apply only to the six separately identified sets. They exclude hyperparameter search trials, official-reproduction training, isolated debugging runs and computational profiles. They are not stated as an exhaustive total for the repository.
+- The 96→12 matched test-evaluation stages total **60 + 40 = 100** jobs. The subsequent validation ablation contains **28** new jobs. The 96→12 subtotal across these three stages is **128**, counting validation and test runs separately but not counting duplicated summary copies as new jobs.
+- Source digests are not interchangeable: original 60-run training digest begins `9c47e939…`, follow-up 40-run digest begins `4d4fd58b…`, and validation ablation training digest begins `34afb573…`.
+- Original complexity profiling has **12** checkpoint/profile code-digest mismatches recorded; follow-up profiling reports **0**.
+- The record contains observed figures and execution metadata; it does not establish a statistically significant architectural effect, a capacity-controlled comparison, or performance on external datasets.
+- The following items are **not recorded as completed in the result directories reviewed**: a new five-seed test evaluation of Grouped-No-PDM, five-seed spatial ablation results for Grouped-No-Spatial/Grouped-Uniform, and a parameter-matched isolation of fusion order or prediction-head count. This statement describes file evidence, not a claim that no work exists outside the reviewed repository.
+
+**Principal code locations:** `MAGE_MS/proposal_model.py`, `MAGE_MS/train_eval.py`, `MAGE_MS/run_matched_eval.py`, `MAGE_MS/run_followup_eval.py`, `MAGE_MS/run_ablation_eval.py`, `MAGE_MS/report_matched_eval.py`, `MAGE_MS/report_grouped_ablation.py`, `MAGE_MS/test_proposal.py`, `MAGE_MS/test_grouped_ablation.py`.
