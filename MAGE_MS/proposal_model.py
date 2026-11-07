@@ -30,10 +30,15 @@ SCHEDULES = {
 EXTRA_SCHEDULES = {
     "no_spatial": (0, 0, 0, 0),
     "grouped": (1,),
+    "grouped_no_pdm": (1,),
+    "grouped_no_spatial": (0,),
+    "grouped_uniform": (0,),
     "proposed_no_pdm": SCHEDULES["proposed"],
 }
 ARM_SCHEDULES = {**SCHEDULES, **EXTRA_SCHEDULES}
 ARMS = tuple(ARM_SCHEDULES)
+GROUPED_ARMS = ("grouped", "grouped_no_pdm", "grouped_no_spatial", "grouped_uniform")
+NO_GRAPH_ARMS = ("uniform", "no_spatial", "grouped_no_spatial", "grouped_uniform")
 
 
 def _pool_time(x, factor):
@@ -223,7 +228,7 @@ class ProposalBlock(nn.Module):
         self.ffn = mage_models.M.SwiGLU_FFN(
             model_dim, model_dim, dropout=dropout
         )
-        if arm in ("uniform", "no_spatial"):
+        if arm in NO_GRAPH_ARMS:
             self.router = None
             self.pools = nn.ModuleList()
         else:
@@ -244,7 +249,7 @@ class ProposalBlock(nn.Module):
         return route, topk
 
     def forward(self, streams, bias):
-        if self.arm in ("uniform", "no_spatial"):
+        if self.arm in NO_GRAPH_ARMS:
             topk = None
             route = None
         else:
@@ -253,9 +258,9 @@ class ProposalBlock(nn.Module):
         outputs = []
         for scale_index, hidden in enumerate(streams):
             normalized = self.norm1(hidden)
-            if self.arm == "uniform":
+            if self.arm in ("uniform", "grouped_uniform"):
                 mixed = normalized.mean(dim=1, keepdim=True).expand_as(normalized)
-            elif self.arm == "no_spatial":
+            elif self.arm in ("no_spatial", "grouped_no_spatial"):
                 mixed = torch.zeros_like(normalized)
             else:
                 pool = self.pools[scale_index] if self.arm == "independent" else self.pools[0]
@@ -316,7 +321,7 @@ class ProposalMAGE(nn.Module):
             year=getattr(model_args, "year", 0),
         )
         self.prompt = mage_models.M.Prompt_Pool(prompt_args)
-        if arm == "proposed_no_pdm":
+        if arm in ("proposed_no_pdm", "grouped_no_pdm"):
             self.temporal = LinearScaleEncoder(
                 self.seq_len, flow_dim, model_dim
             )
@@ -330,9 +335,9 @@ class ProposalMAGE(nn.Module):
                 moving_average=moving_average,
             )
         self.group_projection = (
-            nn.Linear(len(SCALES) * model_dim, model_dim) if arm == "grouped" else None
+            nn.Linear(len(SCALES) * model_dim, model_dim) if arm in GROUPED_ARMS else None
         )
-        stream_count = 1 if arm == "grouped" else len(SCALES)
+        stream_count = 1 if arm in GROUPED_ARMS else len(SCALES)
         self.blocks = nn.ModuleList(
             ProposalBlock(
                 arm,
@@ -372,18 +377,18 @@ class ProposalMAGE(nn.Module):
     @property
     def negative_propagation_count(self):
         schedule = ARM_SCHEDULES[self.arm]
-        return 0 if self.arm in ("uniform", "no_spatial") else 3 * len(schedule)
+        return 0 if self.arm in NO_GRAPH_ARMS else 3 * len(schedule)
 
     @property
     def applications_by_scale(self):
         schedule = ARM_SCHEDULES[self.arm]
-        if self.arm == "grouped":
-            return {"grouped": 3, "negative": self.negative_propagation_count}
+        if self.arm in GROUPED_ARMS:
+            return {"grouped": 3 * schedule[0], "negative": self.negative_propagation_count}
         result = {
             str(scale): 3 * int(power)
             for scale, power in zip(SCALES, schedule)
         }
-        if self.arm not in ("uniform", "no_spatial"):
+        if self.arm not in NO_GRAPH_ARMS:
             result["negative"] = self.negative_propagation_count
         return result
 
@@ -394,7 +399,7 @@ class ProposalMAGE(nn.Module):
             )
         prompt = self.prompt(x)
         encoded = self.temporal(x)
-        if self.arm == "grouped":
+        if self.arm in GROUPED_ARMS:
             fused = self.group_projection(torch.cat(encoded, dim=-1))
             streams = [fused + prompt]
         else:
