@@ -15,7 +15,6 @@ import subprocess
 import sys
 import time
 
-from graph.MAGE_MS.official_repro.src.utils import args
 import run_eval
 import train_eval
 
@@ -390,7 +389,6 @@ def make_parser():
     parser.add_argument("--prepare", action="store_true")
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--reset-resume", action="store_true")
-    parser.add_argument("--overwrite-manifest", action="store_true")
     return parser
 
 
