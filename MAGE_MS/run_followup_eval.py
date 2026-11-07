@@ -15,6 +15,7 @@ import subprocess
 import sys
 import time
 
+from graph.MAGE_MS.official_repro.src.utils import args
 import run_eval
 import train_eval
 
@@ -148,11 +149,36 @@ def run(args):
     args.results_dir.mkdir(parents=True, exist_ok=True)
     args.logs_dir.mkdir(parents=True, exist_ok=True)
     manifest_path = args.results_dir / "followup_manifest.json"
-    if manifest_path.exists() and not args.overwrite_manifest:
-        raise FileExistsError(
-            f"Refusing to overwrite {manifest_path}; use --overwrite-manifest for a new run manifest"
+    new_manifest = _manifest(args, code_digest, data_digests, jobs)
+
+    if manifest_path.exists():
+        with manifest_path.open(encoding="utf-8") as f:
+            previous = json.load(f)
+
+        identity_keys = (
+            "study",
+            "recipe_digest",
+            "recipe_source_code_digest",
+            "selected_hyperparameters",
+            "new_code_digest",
+            "data_digests",
+            "jobs",
         )
-    _atomic_json(manifest_path, _manifest(args, code_digest, data_digests, jobs))
+
+        mismatched = [
+            key for key in identity_keys
+            if previous.get(key) != new_manifest.get(key)
+        ]
+
+        if mismatched:
+            raise RuntimeError(
+                f"Existing manifest is incompatible: {mismatched}. "
+                "Use a separate --results-dir."
+            )
+
+        print(f"Reusing existing manifest: {manifest_path}", flush=True)
+    else:
+        _atomic_json(manifest_path, new_manifest)
 
     expected = {
         job: run_eval.expected_signature(args, job, code_digest, data_digests)
