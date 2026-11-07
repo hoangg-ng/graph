@@ -218,16 +218,19 @@ Same recipe, GPU and precision as the MAGE baselines; T = 96 → 12. c_b = tanh(
 - **Same accuracy with 73 % (PEMS04) / 62 % (PEMS08) fewer parameters.** 1–2 seeds; speed and memory not yet measured cleanly (all runs shared one GPU).
 
 ## 2026-11-07 · Cross-model check, partial (in progress; `MAGE_MS/others/`)
-Graph WaveNet, AGCRN, MTGNN, STAEformer and ASTGCN, reimplemented from the official code (`others/reimpl.py`, `reimpl2.py`; running the cloned repositories was not permitted), each with its paper's recipe, 12 → 12, seed 0. Finished so far (PEMS08):
+Graph WaveNet, AGCRN, MTGNN, STAEformer and ASTGCN, reimplemented from the official code (`others/reimpl.py`, `reimpl2.py`; running the cloned repositories was not permitted), each with its paper's recipe, 12 → 12, seed 0. Finished so far (PEMS08 unless marked):
 
 | model | test MAE | mixing uniformity (1 = mean) | road neighbours vs random | top-5 links on roads (chance) | MAE with mixing → mean (inference) |
 |---|---|---|---|---|---|
 | Graph WaveNet | 14.775 | 0.965 | 0.99× | 2.8 % (1.9 %) | +5.37 |
 | ASTGCN | 19.050 | 0.760 | 0.93× | 0.7 % (1.9 %) | +10.21 |
 | AGCRN | 15.788 | 0.997 | 1.03× | 3.5 % (1.9 %) | +1.66 |
+| Graph WaveNet, PEMS04 | 19.137 | 0.971 | 1.00× | 0.7 % (0.7 %) | +11.75 |
+| AGCRN, PEMS04 | 19.410 | 0.997 | 1.22× | 7.2 % (0.7 %) | +0.42 |
+| MTGNN (sparse: 20 kept links per sensor) | 15.243 | 0.963 over its kept links | 1.64× | 4.6 % (1.9 %) | +2.47 |
 
-- None learns road structure. AGCRN comes closest to the mean (0.997), but none collapses exactly, and all three rely on their learned mixing at inference. So "adaptive graphs collapse to the mean" is **not** general so far; only MAGE shows it.
-- Inference swaps measure reliance, not necessity: a retrain with the mixing fixed to the mean is still needed for each model. MTGNN, STAEformer and all PEMS04 runs are still running.
+- Road structure: none on PEMS08; on PEMS04 Graph WaveNet is at chance, AGCRN shows a weak road signal (top-5 links on roads 7.2 % vs 0.7 % chance, neighbours 1.22×). AGCRN is almost uniform on both datasets (0.997) and its swap cost is small on PEMS04 (+0.42); Graph WaveNet relies heavily on its graph (+5.4 / +11.7). MTGNN (PEMS08) keeps 20 links per sensor with near-equal weights; it shows the clearest road signal so far (1.64× a random pair, top-5 on roads 4.6 % vs 1.9 %), still weak, and relies on its graph (+2.47). None collapses exactly as MAGE does. So "adaptive graphs collapse to the mean" is **not** general so far; only MAGE shows it.
+- Inference swaps measure reliance, not necessity: a retrain with the mixing fixed to the mean is still needed for each model. STAEformer (PEMS08) and the PEMS04 runs of MTGNN, STAEformer and ASTGCN are still running.
 
 ## Not done yet (proposal.md and plan)
 - **proposal.md variants:** Independent (Reversed done 2026-11-02).
