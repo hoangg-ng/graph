@@ -1,0 +1,31 @@
+{
+ "dataset": "PEMS04",
+ "ckpt": "results/pems04/ckpt/PEMS04_T96_mage_mage_s0.pt",
+ "params": {
+  "graph experts (E1, E2)": 1886208,
+  "router": 6192,
+  "lambda + outer": 99846,
+  "feed-forward (SwiGLU)": 593280,
+  "norms": 768,
+  "sensor embedding": 39296,
+  "time-of-day / day-of-week embeddings": 37760,
+  "encoder": 61568,
+  "decoders": 3096
+ },
+ "total_params": 2728014,
+ "ablations": {
+  "full model": 18.29111099243164,
+  "graph experts -> exact sensor mean": 18.290502548217773,
+  "no spatial mixing at all": 45.72105407714844,
+  "sensor embedding off": 32.30366516113281,
+  "time-of-day embedding off": 18.98541831970215,
+  "day-of-week embedding off": 19.490345001220703,
+  "feed-forward off, block 1": 27.887048721313477,
+  "feed-forward off, block 2": 22.51536750793457,
+  "feed-forward off, block 3": 23.96094512939453,
+  "skip block 2": 39.43146896362305,
+  "skip block 3": 55.03886032104492,
+  "final decoder off": 32.6008415222168,
+  "block-1 decoder off": 114.70706176757812
+ }
+}

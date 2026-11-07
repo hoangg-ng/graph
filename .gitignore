@@ -17,3 +17,11 @@
 *.npz
 *.npy
 __pycache__/
+
+# cross-model check: cloned upstream repositories (other people's code, with their own git history) and run logs
+/MAGE_MS/others/Graph-WaveNet/
+/MAGE_MS/others/AGCRN/
+/MAGE_MS/others/MTGNN/
+/MAGE_MS/others/STAEformer/
+/MAGE_MS/others/ASTGCN-r-pytorch/
+/MAGE_MS/others/logs/

@@ -38,6 +38,8 @@ def main():
     p.add_argument('--dataset', default='PEMS08')
     p.add_argument('--encoder', default='linear')
     p.add_argument('--arm', default=None, help='step 8: build streams.MAGEStream with this arm')
+    p.add_argument('--lam', default='mage', choices=['mage', 'sigmoid'],
+                   help="step 8 only: MAGE's unconstrained lambda, or a sigmoid-bounded lambda per expert")
     p.add_argument('--seq_len', type=int, default=12)
     p.add_argument('--horizon', type=int, default=12)
     p.add_argument('--seed', type=int, default=0)
@@ -50,9 +52,13 @@ def main():
     p.add_argument('--lb', type=int, default=1)
     p.add_argument('--data_dir', default='data')
     p.add_argument('--out', required=True)
+    p.add_argument('--graph_fix', type=int, default=0, help='step 8 only: spread-out E1/E2 init and no weight decay on them')
+    p.add_argument('--hier_rank', type=int, default=0, help='step 8 only: rank of the time and sensor levels (0 = off)')
+    p.add_argument('--tf32', type=int, default=0, help='1: TF32 matmuls (Ampere+; faster, ~1e-3 relative precision)')
     a = p.parse_args()
 
     torch.manual_seed(a.seed); np.random.seed(a.seed)
+    torch.backends.cuda.matmul.allow_tf32 = bool(a.tf32); torch.backends.cudnn.allow_tf32 = bool(a.tf32)
     dev = torch.device(a.device)
     z = np.load(f'{ROOT}/{a.data_dir}/{a.dataset}/his.npz')
     data = torch.from_numpy(z['data']).to(dev)              # (T, N, C) normalised values + tod + dow
@@ -72,7 +78,7 @@ def main():
                             quarter=0, year=0, bs=a.bs)
     models.use_linear_contraction(True)
     if a.arm:
-        model = streams.MAGEStream(margs, arm=a.arm, node_num=N, input_dim=C, output_dim=1,
+        model = streams.MAGEStream(margs, arm=a.arm, lam=a.lam, graph_fix=a.graph_fix, hier_rank=a.hier_rank, node_num=N, input_dim=C, output_dim=1,
                                    seq_len=a.seq_len, horizon=a.horizon).to(dev)
         n_enc = model.encoder_params()
     else:
@@ -82,7 +88,13 @@ def main():
     n_total = models.n_params(model)
     print(f'{a.dataset} {a.arm or a.encoder} T={a.seq_len} seed={a.seed} params={n_total} enc={n_enc}', flush=True)
 
-    opt = torch.optim.Adam(model.parameters(), lr=a.lr, weight_decay=a.wd)
+    if a.arm and a.graph_fix:
+        graph = [p_ for n_, p_ in model.named_parameters() if n_.endswith('.E1') or n_.endswith('.E2')]
+        ids = {id(p_) for p_ in graph}
+        opt = torch.optim.Adam([{'params': [p_ for p_ in model.parameters() if id(p_) not in ids]},
+                                {'params': graph, 'weight_decay': 0.0}], lr=a.lr, weight_decay=a.wd)
+    else:
+        opt = torch.optim.Adam(model.parameters(), lr=a.lr, weight_decay=a.wd)
     sched = torch.optim.lr_scheduler.MultiStepLR(opt, milestones=[1, 30, 50, 70, 90, 130, 170, 210, 250, 290, 300], gamma=0.5)
     bias = torch.zeros(3, margs.recur_num, device=dev)
 
@@ -129,7 +141,8 @@ def main():
     res = dict(vars(a), params=n_total, enc_params=n_enc, epochs_run=len(log), best_val_mae=best,
                test_mae=avg[0], test_rmse=avg[1], test_mape=avg[2], per_horizon=per_h,
                train_s_per_epoch=float(np.mean(ep_times)),
-               peak_mem_mb=torch.cuda.max_memory_allocated(dev) / 2**20, log=log)
+               peak_mem_mb=torch.cuda.max_memory_allocated(dev) / 2**20, log=log,
+               graph_entropy=streams.graph_entropy(model) if a.arm else None)
     os.makedirs(os.path.dirname(os.path.abspath(a.out)), exist_ok=True)
     # best weights + balancing bias, for the routing / regime analyses (re-run predictions later)
     ck = os.path.join(os.path.dirname(os.path.abspath(a.out)), 'ckpt', os.path.basename(a.out).replace('.json', '.pt'))

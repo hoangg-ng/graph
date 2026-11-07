@@ -15,10 +15,11 @@ import pandas as pd
 START = {'03': '2018-09-01', '04': '2018-01-01', '07': '2017-05-01', '08': '2016-07-01'}
 if len(sys.argv) > 3:
     START = {k: START[k] for k in sys.argv[3].split(',')}
-# usage: prep.py [max_seq] [out_dir]  (default 48 -> data/; the long-window study uses 288 -> data_w288/)
+# usage: prep.py [max_seq] [out_dir] [datasets e.g. 03,07] [horizon]
+# (default 48 -> data/; the long-window study uses 288 -> data_w288/; horizon defaults to 12)
 MAX_SEQ = int(sys.argv[1]) if len(sys.argv) > 1 else 48
 OUT = sys.argv[2] if len(sys.argv) > 2 else 'data'
-HORIZON = 12
+HORIZON = int(sys.argv[4]) if len(sys.argv) > 4 else 12
 ROOT = os.path.dirname(os.path.abspath(__file__))
 
 for k, start in START.items():

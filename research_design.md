@@ -801,3 +801,44 @@ Mean MAE at horizons 3 / 6 / 12, with RMSE and MAPE:
 - **Variance doubled.** The multi-stream arms have seed sd 0.09–0.10 vs 0.044 for MAGE, partly from early stopping at 130–206 epochs in some runs. A small true gain (≤ 0.03) cannot be ruled in or out without more seeds or a fixed training length.
 
 **Conclusion of step 8 (PEMS08).** Scale-dependent diffusion depth does not work. Separate scale streams are the only part with a signal, and only against the early-merge design. Together with `nomix` (graph worth about 0.06) and `uniform` (global mean hurts), the PEMS08 picture is: at T = 96, neither the temporal multi-scale design nor the spatial operator is where the remaining error is. Do not move to PEMS04 / LargeST with this design.
+
+## Step 8 follow-up (2026-11-02, after the review in `comment.md`)
+
+Results and tables are in `experiment_log.md` (2026-11-02). Decisions:
+- **C2 (`proposed` vs `reversed`) fails:** +0.012, 2/5. With C1 already failing, scale-dependent depth is a clean negative on PEMS08.
+- **C3 (`proposed` vs pure uniform `uniform0`):** −0.088, 3/5; `shared` vs `uniform0` −0.071, 4/5. A learned graph beats the plain network mean, by less than the old confounded `uniform` arm suggested.
+- **Leverage:** the λS⁻ term dominates blocks 1 and 3 (power term 20–35 % of the operator output) and the schedule moves the output by 2–8 % there. A fairer test needs λ bounded (e.g. sigmoid, as the reviewer suggested) or S⁻ removed.
+- **Where space matters:** plain MAGE loses 0.4 MAE without spatial mixing on PEMS04 and PEMS07, 0.22 on PEMS08 (T = 96). PEMS04, the proposal's primary dataset, is where any further spatial test should run. Multi-scale streams appear to substitute for spatial mixing on PEMS08 (needs PEMS04 to confirm).
+- Code: `streams.py` arms `uniform0` and `nomix1`; `prep.py` horizon argument; `diag_lambda.py`.
+
+# Overview: approaches tried so far (status 2026-11-07)
+
+High-level summary of every direction tested since 2026-10-18: the idea, the final result, and the conclusion. Per-run tables are in `experiment_log.md`. Unless stated otherwise: test MAE, lower is better; differences under ~0.05 MAE are seed noise; "A beats B" means a lower mean and better in ≥ 4/5 paired seeds.
+
+## Settled
+
+| # | Approach | Idea | Final result | Conclusion |
+|---|---|---|---|---|
+| 1 | Multi-scale temporal encoders (models 2–5, step 7) | Feed MAGE pooled views of the input window (gated, nonlinear) instead of one linear projection | Never beats linear MAGE at T = 12 / 96 / 288 on PEMS04 / 08; nonlinear encoders overfit at long windows | **Negative** |
+| 2 | Scale-dependent spatial mixing depth (`proposal.md`, step 8) | Coarser time scales mix further over one shared graph, depths (1, 2, 4, 8) | PEMS08, 5 seeds: Proposed vs Shared −0.017 (2/5), vs Reversed +0.012 (2/5), vs MAGE −0.032 (3/5). PEMS04 screen (1 seed): fails the go rule | **Negative.** Direction and depth do not matter. Data pre-check: coarse scales are more strongly correlated across sensors, but not over longer road distances |
+| 3 | Bounded λ | MAGE's λ is unconstrained (2–10, flips sign across seeds); bound one λ per expert to (0, 1) with a sigmoid | PEMS04, 5 seeds: 18.275 → 18.232 (−0.043, better 5/5), RMSE −0.7 %, lower seed variance | **Small, consistent gain**; too small to stand alone |
+| 4 | Separate scale streams (+ bounded λ) | Keep the four time scales apart through MAGE's blocks | PEMS08: beats merging scales at the input (−0.067, 4/5) but only ties MAGE. PEMS04 (1 seed): −0.10 to −0.18 vs MAGE | **Unconfirmed** (1 seed on PEMS04) |
+| 5 | Where does spatial mixing matter? | MAGE vs the same model with spatial mixing switched off, 4 datasets | Worth +0.4 MAE on PEMS04 / 07, +0.22 on PEMS08, +0.1–0.4 on PEMS03; ≈ 0 at 4 h ahead | Space matters modestly; mostly the network-wide common signal |
+| 6 | "Long history replaces space" | Spatial mixing matters less when the input window is long | PEMS08 goes the other way (0.09 at T = 12, 0.22 at T = 96); PEMS03 noisy | **Not supported** |
+| 7 | Graph-collapse fix | Stop MAGE's graph from collapsing (spread-out init, no weight decay on the graph) | +1.3 to +2.2 MAE on PEMS04 / 08: the graph stays structured but random (no road structure) and overfits | **Negative**; the collapse acts as a safeguard |
+| 8 | Rank hierarchy (general / time / sensor levels) | Encoder and decoders = full-rank general part + rank-32 time-of-day part + rank-32 per-sensor part | 1 seed: PEMS08 +0.147, PEMS04 +0.044 vs MAGE | **No gain** on full data |
+| 9 | Data check: do long windows see rush-hour changes? | Does an 8-hour window predict deviations from the usual pattern better than 1 hour? | Rush hours vary day to day (heavy morning → heavy evening, r = 0.40–0.57), but the last hour already shows it: 8 h vs 1 h adds ≤ 0.02 R² on all four PEMS sets | Long-window / multi-scale designs have little to gain on PEMS; explains rows 1, 2 and 8 |
+
+## Open: what MAGE's graph experts actually do (not concluded)
+
+| # | Question | Evidence so far | Status |
+|---|---|---|---|
+| 10 | Do MAGE's graph experts collapse? | In every trained MAGE, including the official code at the paper's setting, the graph parameters shrink to ~0 and every expert becomes the plain sensor average (entropy 1.000). Replacing them by the exact average changes test MAE by ≤ 0.001 | Strong for MAGE |
+| 11 | How many of MAGE's parameters do useful work? | The collapsed graph experts are 56–69 % of the parameters. A slim MAGE (graph experts replaced by one average term per block) matches MAGE (−0.100, −0.003, +0.006 on 3 runs) with 62–73 % fewer parameters | **Open**: 1–2 seeds at T = 96 only; needs 5 seeds in MAGE's own 12 → 12 setting on PEMS03 / 04 / 07 / 08, and clean speed / memory measurements |
+| 12 | Is the collapse general across adaptive-graph models? | Running Graph WaveNet, AGCRN, MTGNN, STAEformer, ASTGCN (reimplemented from the official code). Finished on PEMS08: Graph WaveNet, AGCRN, ASTGCN. None learns road structure (road neighbours 0.93–1.03× a random pair). AGCRN is almost uniform (entropy 0.997), Graph WaveNet close (0.965), ASTGCN not (0.760); none collapses exactly, and all rely on their learned mixing (swap → +1.7 / +5.4 / +10.2 MAE) | **Open**: exact collapse is so far MAGE-specific; 7 runs still going; a retrain with the mixing fixed to the average is still needed for each model |
+
+## Current conclusion
+
+- Neither multi-scale temporal designs nor scale-dependent spatial mixing improve MAGE on PEMS. The data explains why: the last hour already carries the information longer windows add, and spatial mixing mostly carries a network-wide common signal.
+- MAGE's graph experts collapse to a plain average; this is the strongest finding so far, but it is verified only for MAGE. Whether it generalises, and how much of MAGE can be removed without loss, is still open (rows 11–12).
+- The paper framing depends on row 12: a general "learned graphs do not learn roads / collapse" study if the other models agree, otherwise a MAGE-specific diagnosis with a slim model.
