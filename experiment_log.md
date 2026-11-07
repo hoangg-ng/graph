@@ -316,54 +316,102 @@ The following measurements were obtained from saved seed-0 checkpoints. FLOPs ar
 - On PEMS08, the corresponding ratios are approximately **1.76×** and **1.75×**.
 - Grouped therefore provides the best observed predictive accuracy, while MAGE + Features provides a favorable accuracy-efficiency alternative.
 
-**Measurement limitations**
+### 2026-11-08 · V8: Controlled Grouped Ablation Study
 
-- Computational profiling represents **seed 0**, not the distribution of computational measurements over five seeds.
-- CUDA latency, throughput, and peak allocated memory are hardware- and runtime-dependent.
-- Counted FLOPs depend on the profiler's supported operator formulas.
-- Graph application counts for the MAGE implementation are not directly comparable with factorized operator calls in ProposalMAGE.
-- The computational profiles do not establish training energy consumption or hardware-independent speed.
-- Original and follow-up evaluation results should retain their separate source-code and experiment provenance.
-- The generated report's predefined paired-comparison section does not include comparisons among the new variants; individual paired-seed differences and statistical uncertainty should be analyzed separately.
+**Objective:** Identify the contribution of PDM and learned spatial propagation to the Grouped architecture, following the completed 100-run evaluation.
 
-#### Validation and result provenance
+#### Experimental setup
 
-The follow-up complexity report recorded:
+The ablation study introduced three variants of the existing Grouped model:
 
-- Data/split digest validation: **passed**.
-- Checkpoint/profile code-digest mismatches: **0**.
+| Variant | Modification | Purpose |
+|---|---|---|
+| `grouped_no_pdm` | Replace PDM with independent linear encoders for each temporal scale | Evaluate the contribution of PDM |
+| `grouped_no_spatial` | Remove cross-node spatial propagation while retaining temporal processing, spatial prompts, and FFN layers | Evaluate the contribution of learned spatial propagation |
+| `grouped_uniform` | Replace learned spatial propagation with global-mean mixing | Compare learned spatial relationships with simple global mixing |
 
-The complete computational report for the original six variants was also generated. Its individual numerical measurements should be taken directly from the saved original profiling report rather than reconstructed from the follow-up measurements.
+All variants retain four temporal resolutions (5, 10, 20, and 40 minutes), early temporal representation fusion, and a single prediction head.
 
-**Result locations**
+**Experimental protocol**
+- Datasets: PEMS04 and PEMS08
+- Input/output: 96 historical steps → 12 future steps
+- Sampling interval: 5 minutes
+- Seeds: 0–4 for Grouped and Grouped-No-PDM; 0–1 for the spatial ablations
+- Learning rate: 0.005
+- Weight decay: 0.0001
+- Dropout: 0.3
+- Batch size: 64
+- Maximum epochs: 300
+- Early-stopping patience: 30
+- Selection metric: Best validation MAE
+- Evaluation mode: Validation-only; no test-set evaluation
 
-| Result type | Location |
-|---|---|
-| Original 60-run evaluation | `MAGE_MS/results/eval_proposal96/` |
-| Follow-up 40-run evaluation | `MAGE_MS/results/eval_followup96/` |
-| Original model complexity | `MAGE_MS/results/complexity_original_v1/` |
-| Follow-up model complexity | `MAGE_MS/results/complexity_followup_v1/` |
-| Original complexity Markdown | `MAGE_MS/results/complexity_original_v1/model_complexity_table.md` |
-| Follow-up complexity Markdown | `MAGE_MS/results/complexity_followup_v1/model_complexity_table.md` |
+**Completed training runs**
+- Initial ablations: 4 variants × 2 datasets × 2 seeds = 16 runs
+- Additional PDM ablations: 2 variants × 2 datasets × 3 seeds = 12 runs
+- Total: **28 new training runs**
+- Cumulative experiments: **100 earlier test-evaluation runs + 28 validation-only runs = 128 training runs**
 
-The published result files include per-seed evaluation metadata and computational profiles. Model checkpoints (`.pt`), raw datasets, and server logs remain excluded from Git.
+#### 1. PDM ablation: Five-seed validation results
 
-#### Research implications and remaining tasks
+| Dataset | Grouped (mean ± SD) | Grouped-No-PDM (mean ± SD) | Relative improvement | Paired wins |
+|---|---:|---:|---:|---:|
+| PEMS04 | **17.9618 ± 0.0181** | 18.0245 ± 0.0159 | −0.35% | 0/5 |
+| PEMS08 | 13.8996 ± 0.0416 | **13.8717 ± 0.0547** | +0.20% | 3/5 |
 
-The main finding is that **the Grouped architecture achieved lower test MAE than the original scale-dependent spatial-mixing proposal on both PEMS04 and PEMS08**, but its computational cost is higher than that of MAGE + Features.
+**Findings**
 
-This is an exploratory follow-up finding and should be distinguished from the original prespecified hypothesis test.
+- On PEMS04, removing PDM increased mean validation MAE by approximately 0.0627, corresponding to a 0.35% deterioration. The original Grouped model outperformed Grouped-No-PDM across all five paired seeds.
+- On PEMS08, Grouped-No-PDM reduced mean validation MAE by approximately 0.0279 (0.20%), but achieved better results in only three of five seeds.
+- The PEMS08 result does not satisfy the previously adopted four-of-five-seeds consistency criterion.
+- The contribution of PDM therefore appears dependent on the dataset. The results do not support removing PDM universally.
 
-**Remaining tasks**
-- [x] Complete the original 60 matched evaluation runs.
-- [x] Complete the additional 40 evaluation runs.
-- [x] Generate computational profiling reports for the original six and follow-up four variants.
-- [ ] Verify that all original complexity profile entries have `status=completed` and document any code-digest differences.
-- [ ] Produce a consolidated 10-model computational comparison using the measured original and follow-up profile files.
-- [ ] Calculate paired-seed MAE differences for Grouped against MAGE, Uniform, Proposed, and MAGE + Features.
-- [ ] Verify cross-experiment comparability, including preprocessing, checkpoint provenance, and evaluation settings.
-- [ ] Complete the full regression test suite and document any remaining numerical tolerance issues.
-- [ ] Update `proposal.md` and the final presentation to distinguish the original hypothesis from the exploratory Grouped finding.
-- [ ] Consider a parameter-controlled experiment isolating the effect of temporal fusion order, subject to the remaining project schedule.
+#### 2. Spatial ablation: Two-seed validation results
 
-**Conclusion:** The original hypothesis was not supported by the prespecified comparisons. The exploratory Grouped architecture achieved the best mean MAE on both datasets, while MAGE + Features remained more computationally efficient. Further controlled comparisons are needed to determine which architectural change accounts for Grouped's advantage.
+| Variant | PEMS04 (mean ± SD) | PEMS08 (mean ± SD) |
+|---|---:|---:|
+| `grouped` | **17.9553 ± 0.0088** | **13.9073 ± 0.0257** |
+| `grouped_no_spatial` | 18.1361 ± 0.0104 | 13.9705 ± 0.0669 |
+| `grouped_uniform` | 18.0745 ± 0.0804 | 14.0398 ± 0.0166 |
+
+**Findings**
+
+- Removing spatial propagation increased mean validation MAE by approximately 1.01% on PEMS04 and 0.45% on PEMS08.
+- Replacing the learned spatial operator with global-mean mixing increased mean validation MAE by approximately 0.66% on PEMS04 and 0.95% on PEMS08.
+- Grouped outperformed both spatial ablations in all paired two-seed comparisons on both datasets.
+- These results provide preliminary evidence that learned spatial propagation contributes to the predictive performance of Grouped.
+- However, the ablations also alter the number of model parameters. The contribution of spatial propagation has not been isolated under matched model capacity.
+
+#### 3. Interpretation
+
+The original proposal hypothesized that coarser temporal resolutions would benefit from stronger spatial propagation. Earlier experiments did not demonstrate a substantial or consistent advantage from this design.
+
+Subsequently, Grouped achieved the lowest test MAE among the ten previously evaluated variants by combining multiscale temporal representations before spatial processing.
+
+The present ablation study provides additional information about that architecture:
+
+1. PDM is beneficial for Grouped on PEMS04 under the validation protocol, but its contribution on PEMS08 is inconclusive.
+2. Removing learned spatial propagation or replacing it with global-mean mixing degrades validation performance in the two-seed comparisons.
+3. The advantage of Grouped cannot yet be attributed exclusively to early temporal fusion because Grouped also changes the number of spatial processing streams, propagation operations, residual pathways, and prediction heads.
+
+#### 4. Limitations
+
+- The new ablation results are based on validation MAE, whereas the previous main experiments reported test MAE. The two sets of results must not be directly compared as identical evaluation outcomes.
+- Grouped and Grouped-No-PDM were evaluated with five seeds; Grouped-No-Spatial and Grouped-Uniform were evaluated with only two seeds.
+- Differences in parameter count remain a possible confounding factor for the spatial ablations.
+- Statistical significance and generalization to other datasets have not been established.
+- The earlier 1.5% test-MAE improvement target relative to MAGE has not yet been achieved on both datasets.
+- 
+**Conclusion:** The results favor retaining learned spatial propagation in the Grouped architecture. PDM contributes differently across PEMS04 and PEMS08 and requires further analysis. Future work will prioritize isolating the effects of temporal fusion and prediction-head design rather than further increasing scale-dependent spatial propagation depth.
+
+#### Result locations
+
+- `MAGE_MS/results/ablation_val96/`
+- `MAGE_MS/results/ablation_val96_s234/`
+- `MAGE_MS/results/ablation_val96_5seed/`
+- `MAGE_MS/proposal_model.py`
+- `MAGE_MS/run_ablation_eval.py`
+- `MAGE_MS/test_grouped_ablation.py`
+- `MAGE_MS/report_grouped_ablation.py`
+
+The experimental code and results are maintained separately from the original MAGE implementation.
