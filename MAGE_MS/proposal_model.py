@@ -27,7 +27,13 @@ SCHEDULES = {
     "independent": (1, 1, 1, 1),
     "uniform": (0, 0, 0, 0),
 }
-ARMS = tuple(SCHEDULES)
+EXTRA_SCHEDULES = {
+    "no_spatial": (0, 0, 0, 0),
+    "grouped": (1,),
+    "proposed_no_pdm": SCHEDULES["proposed"],
+}
+ARM_SCHEDULES = {**SCHEDULES, **EXTRA_SCHEDULES}
+ARMS = tuple(ARM_SCHEDULES)
 
 
 def _pool_time(x, factor):
@@ -141,6 +147,29 @@ class PDMScales(nn.Module):
         ]
 
 
+class LinearScaleEncoder(nn.Module):
+    """Encode pooled flow independently at each temporal scale."""
+
+    def __init__(self, seq_len, flow_dim, model_dim, scales=SCALES):
+        super().__init__()
+        self.scales = tuple(scales)
+        self.flow_dim = flow_dim
+        self.encoders = nn.ModuleList(
+            nn.Linear((seq_len // scale) * flow_dim, model_dim)
+            for scale in self.scales
+        )
+
+    def forward(self, x):
+        flow = x[..., : self.flow_dim]
+        batch, _, nodes, _ = flow.shape
+        outputs = []
+        for scale, encoder in zip(self.scales, self.encoders):
+            pooled = _pool_time(flow, scale)
+            flattened = pooled.permute(0, 2, 1, 3).reshape(batch, nodes, -1)
+            outputs.append(encoder(flattened))
+        return outputs
+
+
 class ExpertPool(nn.Module):
     """Factorized low-rank positive and expert-weighted negative graph operators."""
 
@@ -194,7 +223,7 @@ class ProposalBlock(nn.Module):
         self.ffn = mage_models.M.SwiGLU_FFN(
             model_dim, model_dim, dropout=dropout
         )
-        if arm == "uniform":
+        if arm in ("uniform", "no_spatial"):
             self.router = None
             self.pools = nn.ModuleList()
         else:
@@ -215,7 +244,7 @@ class ProposalBlock(nn.Module):
         return route, topk
 
     def forward(self, streams, bias):
-        if self.arm == "uniform":
+        if self.arm in ("uniform", "no_spatial"):
             topk = None
             route = None
         else:
@@ -226,9 +255,11 @@ class ProposalBlock(nn.Module):
             normalized = self.norm1(hidden)
             if self.arm == "uniform":
                 mixed = normalized.mean(dim=1, keepdim=True).expand_as(normalized)
+            elif self.arm == "no_spatial":
+                mixed = torch.zeros_like(normalized)
             else:
                 pool = self.pools[scale_index] if self.arm == "independent" else self.pools[0]
-                power = SCHEDULES[self.arm][scale_index]
+                power = ARM_SCHEDULES[self.arm][scale_index]
                 positive = pool.positive_power(normalized, route, power)
                 negative = pool.apply(normalized, route, sign=1)
                 mixed = positive - negative
@@ -256,7 +287,7 @@ class ProposalMAGE(nn.Module):
         dropout=0.3,
     ):
         super().__init__()
-        if arm not in SCHEDULES:
+        if arm not in ARM_SCHEDULES:
             raise ValueError(f"unknown arm {arm!r}; expected one of {ARMS}")
         self.arm = arm
         self.node_num = model_args.node_num
@@ -285,14 +316,23 @@ class ProposalMAGE(nn.Module):
             year=getattr(model_args, "year", 0),
         )
         self.prompt = mage_models.M.Prompt_Pool(prompt_args)
-        self.temporal = PDMScales(
-            self.seq_len,
-            flow_dim,
-            model_dim,
-            width=pdm_width,
-            depth=pdm_depth,
-            moving_average=moving_average,
+        if arm == "proposed_no_pdm":
+            self.temporal = LinearScaleEncoder(
+                self.seq_len, flow_dim, model_dim
+            )
+        else:
+            self.temporal = PDMScales(
+                self.seq_len,
+                flow_dim,
+                model_dim,
+                width=pdm_width,
+                depth=pdm_depth,
+                moving_average=moving_average,
+            )
+        self.group_projection = (
+            nn.Linear(len(SCALES) * model_dim, model_dim) if arm == "grouped" else None
         )
+        stream_count = 1 if arm == "grouped" else len(SCALES)
         self.blocks = nn.ModuleList(
             ProposalBlock(
                 arm,
@@ -306,7 +346,8 @@ class ProposalMAGE(nn.Module):
             for _ in range(3)
         )
         self.heads = nn.ModuleList(
-            nn.Linear(model_dim, self.horizon * self.output_dim) for _ in SCALES
+            nn.Linear(model_dim, self.horizon * self.output_dim)
+            for _ in range(stream_count)
         )
         self.num_experts = num_experts
 
@@ -326,11 +367,25 @@ class ProposalMAGE(nn.Module):
 
     @property
     def positive_propagation_count(self):
-        return 3 * sum(SCHEDULES[self.arm])
+        return 3 * sum(ARM_SCHEDULES[self.arm])
 
     @property
     def negative_propagation_count(self):
-        return 0 if self.arm == "uniform" else 3 * len(SCALES)
+        schedule = ARM_SCHEDULES[self.arm]
+        return 0 if self.arm in ("uniform", "no_spatial") else 3 * len(schedule)
+
+    @property
+    def applications_by_scale(self):
+        schedule = ARM_SCHEDULES[self.arm]
+        if self.arm == "grouped":
+            return {"grouped": 3, "negative": self.negative_propagation_count}
+        result = {
+            str(scale): 3 * int(power)
+            for scale, power in zip(SCALES, schedule)
+        }
+        if self.arm not in ("uniform", "no_spatial"):
+            result["negative"] = self.negative_propagation_count
+        return result
 
     def forward(self, x, bias=None):
         if bias is None:
@@ -338,7 +393,12 @@ class ProposalMAGE(nn.Module):
                 3, self.num_experts, device=x.device, dtype=x.dtype
             )
         prompt = self.prompt(x)
-        streams = [value + prompt for value in self.temporal(x)]
+        encoded = self.temporal(x)
+        if self.arm == "grouped":
+            fused = self.group_projection(torch.cat(encoded, dim=-1))
+            streams = [fused + prompt]
+        else:
+            streams = [value + prompt for value in encoded]
         counts = []
         for block, block_bias in zip(self.blocks, bias):
             streams, block_counts = block(streams, block_bias)
