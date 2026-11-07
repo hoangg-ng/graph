@@ -197,13 +197,147 @@ Unit tests passed:
 
 **Comparability note:** The original MAGE paper's **12 -> 12** results, the earlier team's experiments using **different features/splits/operators**, and the current **flow-only matched 96 -> 12** results are distinct evaluation protocols; their absolute MAE values must not be treated as matched comparisons.
 
-### Follow-up experiments — planned, not yet implemented
 
-- [ ] Complete all 60 matched runs, check run signatures, and analyze **paired-seed wins**, average MAE, standard deviations, parameter counts, and training costs.
-- [ ] Compare **early fusion** of multi-scale temporal features against **separate temporal streams**.
-- [ ] Run a **no-PDM ablation** to isolate the effect of temporal decomposition and cross-scale mixing.
-- [ ] Diagnose possible **oversmoothing from repeated spatial propagation**; consider reduced schedules as separately labeled exploratory variants.
-- [ ] Add external baselines such as **TimeMixer and STID**, if needed for the final project report.
-- [ ] Update Overleaf to describe the **implemented** PDM, shared routing, signed graph parameters, preprocessing, and common evaluation recipe.
+### 2026-11-07 · V4: Completed matched evaluation (60 runs)
 
-**Documentation rule:** Keep the original team's results unchanged. Distinguish committed code changes, server-side runs, preliminary test snapshots, and future plans. Preserve the current 60-run experiment as a fixed reference when testing later modifications.
+**Status:** The server-side matched evaluation is reported as completed. The results below are based on the five-seed evaluation summary. Individual training result JSONs and checkpoints remain on the server and are not committed to GitHub.
+
+**Experimental protocol**
+- Datasets: PEMS04 and PEMS08.
+- Input/output: **96 historical steps → 12 future steps** (5-minute sampling).
+- Variants: MAGE, Shared, Proposed, Reversed, Independent, and Uniform.
+- Seeds: **0–4** for each variant and dataset.
+- Total: **2 datasets × 6 variants × 5 seeds = 60 runs**.
+- Shared configuration: learning rate **0.005**, weight decay **0.0001**, dropout **0.3**, batch size **64**, maximum **300 epochs**, and early-stopping patience **30**.
+- Primary metric: masked test MAE; lower is better.
+- Result directory: `MAGE_MS/results/eval_proposal96/`.
+
+**Matched test MAE (mean ± SD, 5 seeds)**
+
+| Variant | PEMS04 | PEMS08 |
+|---|---:|---:|
+| MAGE | 18.092 ± 0.022 | **13.813 ± 0.020** |
+| Shared (1,1,1,1) | 18.148 ± 0.056 | 13.930 ± 0.024 |
+| Proposed (1,2,4,8) | 18.130 ± 0.070 | 13.911 ± 0.031 |
+| Reversed (8,4,2,1) | 18.136 ± 0.050 | 13.929 ± 0.031 |
+| Independent | 18.114 ± 0.029 | 13.913 ± 0.012 |
+| Uniform | **17.998 ± 0.039** | 13.827 ± 0.068 |
+
+**Findings**
+- Proposed achieved slightly lower mean MAE than Shared and Reversed on both datasets.
+- These reductions were below the prespecified **1% mean MAE improvement threshold**. The original support criterion was therefore not satisfied.
+- Proposed performed worse than MAGE on both datasets.
+- Uniform achieved the lowest mean MAE on PEMS04; MAGE achieved the lowest on PEMS08.
+- The results do not establish a forecasting advantage from assigning more positive spatial propagation steps to coarser temporal resolutions.
+- Results from the earlier `main` Step-8 experiments must not be pooled with these results because their model implementations and evaluation protocols differ.
+
+**Related evaluation files**
+- `MAGE_MS/run_matched_eval.py`
+- `MAGE_MS/report_matched_eval.py`
+- `MAGE_MS/results/eval_proposal96/matched_mae_table.md`
+- `MAGE_MS/results/eval_proposal96/matched_mae_summary.csv`
+- `MAGE_MS/results/eval_proposal96/matched_mae_per_seed.csv`
+
+### 2026-11-07 · V5: Computational profiling and additional ablation models
+
+**Status:** Implementation committed to the `Jiwon-work` branch. Follow-up training results have not yet been recorded.
+
+**Computational profiling**
+
+Added:
+- `MAGE_MS/profile_models.py`
+- `MAGE_MS/report_complexity.py`
+- `MAGE_MS/test_complexity.py`
+
+The profiler restores saved checkpoints without retraining and records:
+- Total and trainable parameters.
+- Counted FLOPs for a complete forward pass.
+- Positive and negative spatial propagation counts.
+- Inference latency at batch sizes 1 and 64.
+- Throughput and peak GPU memory.
+- GPU, PyTorch, CUDA, and precision settings.
+
+FLOPs are based on the operations supported by the PyTorch counting mechanism and should not be interpreted as an exhaustive count of every operation.
+
+**Spatial propagation counts per forward pass**
+
+| Variant | Positive | Negative | Total |
+|---|---:|---:|---:|
+| Shared | 12 | 12 | 24 |
+| Proposed | 45 | 12 | 57 |
+| Reversed | 45 | 12 | 57 |
+| Independent | 12 | 12 | 24 |
+| Uniform | 0 | 0 | 0 |
+| No-Spatial | 0 | 0 | 0 |
+| Grouped | 3 | 3 | 6 |
+| Proposed-No-PDM | 45 | 12 | 57 |
+
+The original MAGE propagation count is not directly comparable to the ProposalMAGE factorized-operator call count.
+
+**New ablation variants**
+
+| Variant | Implementation | Research purpose |
+|---|---|---|
+| `mage_features` | MAGE with historical-window-local moving averages, first differences, and time-of-day features | Test whether additional temporal features improve the MAGE baseline |
+| `no_spatial` | Four PDM streams without spatial propagation | Assess the contribution of spatial mixing |
+| `grouped` | Four PDM representations concatenated and projected into one spatial stream | Compare grouped and separate multiscale spatial processing |
+| `proposed_no_pdm` | Independent linear scale encoders with the Proposed spatial schedule | Assess the contribution of PDM |
+
+The Grouped variant also changes the number of spatial streams and parameter count. Its comparison with Proposed is therefore not a parameter-controlled isolation of feature grouping alone.
+
+**Implementation and validation**
+- Removed duplicated feature construction during `mage_features` profiling.
+- Added device-specific CUDA stream handling for latency measurements.
+- Added automated historical-output regression tests against commit `4c6854b`.
+- Corrected the complexity report's measurement-environment reference.
+- Added a follow-up scheduler with default dry-run, saved recipe provenance, restart support, GPU resource checks, and separate output directories.
+- Existing model outputs and saved matched-evaluation results are intended to remain unchanged.
+
+**GitHub commits**
+- [`b77d162`](https://github.com/hoangg-ng/graph/commit/b77d1623c42aec782b78088daa1ffd237025445c): Add model complexity profiling and follow-up experiments.
+- [`3cd4007`](https://github.com/hoangg-ng/graph/commit/3cd4007377b1892f3ed65992d7732feeffc32785): Fix model profiling and regression checks.
+- [`dac6bbe`](https://github.com/hoangg-ng/graph/commit/dac6bbef9f893557dfaa7b8045c83ba5a89b73e8): Fix follow-up evaluation manifest resume.
+- [`ffd5d33`](https://github.com/hoangg-ng/graph/commit/ffd5d33357182cbab40e6fdbfb72b32cf11710d4): Fix follow-up runner import and remove unused manifest flag.
+
+**Diagnostic observation**
+
+The reported seed-0 operator diagnostics found very small differences between some repeated positive-operator powers, with `D(2,4)` and `D(4,8)` approximately on the order of `1e-7`.
+
+This suggests that additional applications may not create substantially different spatial operators after the initial propagation. The observation requires further checking across layers, input windows, and random seeds. It does not by itself prove that spatial representations are identical or that the research hypothesis is false.
+
+### 2026-11-07 · V6: Follow-up evaluation plan
+
+**Objective:** Evaluate the four newly implemented variants under the existing matched 96 → 12 forecasting protocol.
+
+**Planned evaluation**
+- PEMS04: 4 variants × 5 seeds = **20 runs**.
+- PEMS08: 4 variants × 5 seeds = **20 runs**.
+- Total additional evaluation: **40 runs**.
+- Seeds: 0, 1, 2, 3, 4.
+- Hyperparameters: reuse the selected Shared recipe without selecting new settings based on test MAE.
+- Primary metric: masked test MAE.
+- Additional metrics: RMSE, MAPE, parameters, counted FLOPs, inference latency, throughput, and GPU memory.
+
+**Execution files**
+- Launcher: `MAGE_MS/run_followup_eval.py`
+- Training worker: `MAGE_MS/train_eval.py`
+- Recipe: `MAGE_MS/results/tune_shared/selected_recipe.json`
+- New results: `MAGE_MS/results/eval_followup96/`
+- New logs: `MAGE_MS/logs/eval_followup96/`
+
+The original 60-run results in `results/eval_proposal96/` must not be overwritten or retrained as part of this follow-up.
+
+**Remaining tasks**
+- [x] Implement the four follow-up variants.
+- [x] Implement computational profiling.
+- [x] Add profiling and historical regression tests.
+- [x] Commit the implementation and fixes to `Jiwon-work`.
+- [ ] Confirm the complete test suite passes on the evaluation server.
+- [ ] Confirm the selected recipe and prepared-data fingerprints.
+- [ ] Complete the 40 follow-up MAE evaluation runs.
+- [ ] Profile the computational cost of all four new variants.
+- [ ] Compare follow-up results with the original six variants, retaining separate code-version identifiers.
+- [ ] Update the proposal and final report with verified results.
+- [ ] Evaluate external TimeMixer and STID baselines if time and project requirements permit.
+
+**Reporting rule:** Do not describe the follow-up runs as completed until all relevant result files have been verified. Record actual MAE, standard deviation, run counts, and computational measurements after execution. Preserve the initial 60-run results as the fixed primary evaluation.
