@@ -109,6 +109,11 @@ the benchmark calls CUDA unconditionally and cannot run with GPUs hidden.
 - `report_unified_slim.py` refuses mixed code/data/configuration and mismatched
   checkpoint profiles. Validation reports use only `best_val_mae`; test RMSE,
   MAPE and 15/30/60-minute metrics remain unavailable until test evaluation.
+  `eval_unified_slim_validation.py` can separately compute **validation** RMSE,
+  MAPE and horizon errors from the same saved best checkpoint; its MAE must
+  agree with the recorded selection metric. Two supplemental tests verify
+  validation-only evaluation and matching provenance. Training JSON/weights
+  are never overwritten by this evaluator.
 
 An additional old `test_run_proposal.py` fails on the baseline commit because
 it imports the absent `paired_mae_results` and expects 46 jobs while the old
@@ -163,8 +168,12 @@ python profile_models.py --datasets PEMS04 PEMS08 \
   --out-dir results/unified_slim_complexity --device cuda:0 \
   --batch-sizes 1 64 --warmup 20 --repeats 100
 
+python eval_unified_slim_validation.py --results-dir results/unified_slim_val96 \
+  --data-dir "$DATA_DIR" --out-dir results/unified_slim_val96_metrics --seeds 0 1
+
 python report_unified_slim.py --validation-only \
   --results-dir results/unified_slim_val96 --profile-dir results/unified_slim_complexity \
+  --validation-metrics-dir results/unified_slim_val96_metrics \
   --out-dir results/unified_slim_val96_report
 
 # After formal test evaluation, generate the test report separately.

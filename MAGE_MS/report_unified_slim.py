@@ -41,7 +41,8 @@ def read_runs(directory, datasets, arms, seeds, validation_only):
                 if row.get("completed") is not True:
                     missing.append(path.name)
                     continue
-                if (row.get("dataset"), row.get("arm"), row.get("seed")) != (dataset, arm, seed):
+                if ((row.get("dataset"), row.get("arm"), row.get("seed")) != (dataset, arm, seed)
+                        or type(row.get("seed")) is not int):
                     raise ValueError(f"Filename/identity mismatch: {path}")
                 if row.get("protocol") != protocol:
                     raise ValueError(f"Wrong evaluation protocol: {path}")
@@ -58,6 +59,13 @@ def read_runs(directory, datasets, arms, seeds, validation_only):
                         raise ValueError(f"Invalid {field}: {path}")
                 if not row.get("data_digest") or not row.get("code_digest"):
                     raise ValueError(f"Missing provenance: {path}")
+                if not validation_only:
+                    horizons = row.get("per_horizon", [])
+                    if len(horizons) != 12 or any(not isinstance(values, list) or len(values) != 3 for values in horizons):
+                        raise ValueError(f"Missing horizon metrics: {path}")
+                    values = [row.get("test_rmse"), row.get("test_mape")] + [h[0] for h in horizons]
+                    if any(type(v) not in (int, float) or not math.isfinite(v) or v < 0 for v in values):
+                        raise ValueError(f"Invalid test/horizon metrics: {path}")
                 records[(dataset, arm, seed)] = row
     if len({r["code_digest"] for r in records.values()}) > 1:
         raise ValueError("Mixed source versions; use one new-code run directory")
@@ -87,7 +95,7 @@ def read_profiles(directory, records):
             raise ValueError(f"Profile/MAE data mismatch: {path}")
         if row.get("checkpoint_code_digest") != result["code_digest"] or row.get("profile_code_digest") != result["code_digest"]:
             raise ValueError(f"Profile/MAE source mismatch: {path}")
-        if row.get("checkpoint_signature") != result.get("signature"):
+        if not result.get("signature") or row.get("checkpoint_signature") != result["signature"]:
             raise ValueError(f"Profile uses a different checkpoint configuration: {path}")
         if key in profiles:
             raise ValueError(f"Duplicate cost profile: {path}")
@@ -95,7 +103,36 @@ def read_profiles(directory, records):
     return profiles
 
 
-def summarize(records, profiles, datasets, arms, seeds, validation_only):
+def read_validation_metrics(directory, records):
+    metrics = {}
+    if directory is None:
+        return metrics
+    for key, result in records.items():
+        dataset, arm, seed = key
+        path = directory / f"validation_{dataset}_{arm}_s{seed}.json"
+        if not path.exists():
+            continue
+        row = json.loads(path.read_text())
+        if (row.get("completed") is not True
+                or row.get("protocol") != "96to12_v1_validation_best_checkpoint_metrics"
+                or (row.get("dataset"), row.get("arm"), row.get("seed")) != key):
+            raise ValueError(f"Invalid validation metric file: {path}")
+        if any(row.get(k) != result.get(k) for k in ("signature", "data_digest", "code_digest")):
+            raise ValueError(f"Validation metric provenance mismatch: {path}")
+        horizons = row.get("per_horizon", [])
+        if len(horizons) != 12 or any(len(h) != 3 for h in horizons):
+            raise ValueError(f"Missing validation horizon metrics: {path}")
+        values = [row.get(k) for k in ("val_mae", "val_rmse", "val_mape")] + [v for h in horizons for v in h]
+        if any(type(v) not in (int, float) or not math.isfinite(v) or v < 0 for v in values):
+            raise ValueError(f"Invalid validation metrics: {path}")
+        if not math.isclose(row["val_mae"], result["best_val_mae"], rel_tol=1e-5, abs_tol=1e-4):
+            raise ValueError(f"Validation metrics do not match best checkpoint: {path}")
+        metrics[key] = row
+    return metrics
+
+
+def summarize(records, profiles, datasets, arms, seeds, validation_only, validation_metrics=None):
+    validation_metrics = validation_metrics or {}
     metric = "best_val_mae" if validation_only else "test_mae"
     rows, comparisons = [], []
     cost_fields = {
@@ -112,6 +149,7 @@ def summarize(records, profiles, datasets, arms, seeds, validation_only):
         for arm in arms:
             runs = [records[(dataset, arm, s)] for s in seeds if (dataset, arm, s) in records]
             costs = [profiles[(dataset, arm, s)] for s in seeds if (dataset, arm, s) in profiles]
+            val_rows = [validation_metrics[(dataset, arm, s)] for s in seeds if (dataset, arm, s) in validation_metrics]
             params = {r["params"] for r in runs}
             if len(params) > 1:
                 raise ValueError(f"Changing parameter count across seeds: {dataset}/{arm}")
@@ -122,11 +160,12 @@ def summarize(records, profiles, datasets, arms, seeds, validation_only):
                 "mae_mean": stats([r[metric] for r in runs])[0],
                 "mae_sd": stats([r[metric] for r in runs])[1],
                 "params": next(iter(params), None), "profile_seed_count": len(costs),
-                "rmse_mean": None if validation_only else stats([r["test_rmse"] for r in runs])[0],
-                "mape_mean": None if validation_only else stats([r["test_mape"] for r in runs])[0],
+                "validation_metric_seed_count": len(val_rows),
+                "rmse_mean": stats([r["val_rmse"] for r in val_rows])[0] if validation_only else stats([r["test_rmse"] for r in runs])[0],
+                "mape_mean": stats([r["val_mape"] for r in val_rows])[0] if validation_only else stats([r["test_mape"] for r in runs])[0],
             }
             for minutes, horizon in ((15, 2), (30, 5), (60, 11)):
-                row[f"mae_{minutes}m"] = None if validation_only else stats([r["per_horizon"][horizon][0] for r in runs])[0]
+                row[f"mae_{minutes}m"] = stats([r["per_horizon"][horizon][0] for r in (val_rows if validation_only else runs)])[0]
             for name, source in cost_fields.items():
                 row[name] = stats([r[source] for r in costs if isinstance(r.get(source), (int, float))])[0]
             pairs = [(records[(dataset, arm, s)][metric], records[(dataset, "grouped", s)][metric])
@@ -156,19 +195,21 @@ def fmt(value, digits=4):
 
 
 def build_report(results_dir, out_dir, profile_dir=None, datasets=("PEMS04", "PEMS08"),
-                 arms=ARMS, seeds=(0, 1), validation_only=True, overwrite=False):
+                 arms=ARMS, seeds=(0, 1), validation_only=True, overwrite=False, validation_metrics_dir=None):
     names = ("unified_slim_summary.md", "unified_slim_summary.csv", "unified_slim_provenance.json", "unified_slim_missing.txt")
     outputs = [out_dir / name for name in names]
     if not overwrite and any(path.exists() for path in outputs):
         raise FileExistsError(f"Report already exists in {out_dir}")
     records, missing = read_runs(results_dir, datasets, arms, seeds, validation_only)
     profiles = read_profiles(profile_dir, records)
-    rows, comparisons = summarize(records, profiles, datasets, arms, seeds, validation_only)
+    validation_metrics = read_validation_metrics(validation_metrics_dir, records) if validation_only else {}
+    rows, comparisons = summarize(records, profiles, datasets, arms, seeds, validation_only, validation_metrics)
     lines = ["# Grouped / Slim fusion-order comparison", "",
         f"Mode: {'validation only (best_val_mae)' if validation_only else 'test evaluation'}. "
         f"Completed {len(records)}/{len(datasets)*len(arms)*len(seeds)} runs. All pilot findings are exploratory.", "",
         "MAE change is candidate minus Grouped; negative is lower. Standard deviations are sample SD. "
-        "Missing metrics remain n/a. Validation runs do not provide test RMSE/MAPE or horizon errors.", "",
+        "RMSE/MAPE are means of per-run metrics. Missing metrics remain n/a. In validation mode, RMSE/MAPE and horizon errors come only from "
+        "separate best-checkpoint validation metrics; these are not test results.", "",
         "| Dataset | Model | Seeds | MAE mean ± SD | RMSE | MAPE | Params | Counted GFLOPs | Latency B=1 ms | Peak B=64 MiB |",
         "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|"]
     for row in rows:
@@ -189,6 +230,16 @@ def build_report(results_dir, out_dir, profile_dir=None, datasets=("PEMS04", "PE
     for row in comparisons:
         lines.append(f"- {row['dataset']}: paired A−B MAE {fmt(row['A_minus_B_mae_mean'])} ± "
                      f"{fmt(row['A_minus_B_mae_sd'])}; A wins {row['A_wins'] if row['A_wins'] is not None else 'n/a'}/{row['paired_seeds']}.")
+    available = [r["A_minus_B_mae_mean"] for r in comparisons if r["A_minus_B_mae_mean"] is not None]
+    if len(datasets) < 2 or len(available) != len(datasets):
+        consistency = "Not assessed: paired results are needed from both datasets"
+    elif all(value < 0 for value in available):
+        consistency = "A has lower available paired mean MAE on both datasets (descriptive)"
+    elif all(value > 0 for value in available):
+        consistency = "B has lower available paired mean MAE on both datasets (descriptive)"
+    else:
+        consistency = "No common strict direction across datasets; signs differ or a mean is tied"
+    lines += ["", f"Cross-dataset consistency: {consistency}."]
     lines += ["", "## Interpretation and measurement limits", "",
         "A fuses before spatial processing; B reuses the same three Slim blocks across four streams. "
         "A/B have equal parameters, but B executes Slim/FFN 12 times versus A's 3. Prompt position and "
@@ -200,9 +251,11 @@ def build_report(results_dir, out_dir, profile_dir=None, datasets=("PEMS04", "PE
     provenance = {
         "base_commit": BASE_COMMIT, "slim_reference_commit": SLIM_COMMIT,
         "validation_only": validation_only, "seeds": list(seeds), "missing": missing,
+        "supplemental_validation_metric_count": len(validation_metrics),
         "code_digests": sorted({r["code_digest"] for r in records.values()}),
         "data_digests": {d: sorted({r['data_digest'] for k, r in records.items() if k[0] == d}) for d in datasets},
         "comparisons": comparisons,
+        "cross_dataset_consistency": consistency,
         "profile_environments": [{k: r.get(k) for k in ("dataset", "arm", "seed", "gpu_model", "torch_version", "cuda_version", "precision", "tf32_enabled", "warmup", "repeats", "profile_batch_sizes", "flops_count_method")} for r in profiles.values()],
     }
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -221,6 +274,7 @@ def main():
     parser.add_argument("--validation-only", action="store_true")
     parser.add_argument("--results-dir", type=Path, required=True)
     parser.add_argument("--profile-dir", type=Path)
+    parser.add_argument("--validation-metrics-dir", type=Path)
     parser.add_argument("--out-dir", type=Path, required=True)
     parser.add_argument("--datasets", nargs="+", choices=("PEMS04", "PEMS08"), default=["PEMS04", "PEMS08"])
     parser.add_argument("--arms", nargs="+", choices=OPTIONAL_ARMS, default=list(ARMS))
@@ -231,7 +285,7 @@ def main():
     if not seeds or len(set(seeds)) != len(seeds) or any(s not in range(5) for s in seeds):
         parser.error("Select unique seeds in 0..4")
     for path in build_report(args.results_dir, args.out_dir, args.profile_dir, args.datasets,
-                             args.arms, seeds, args.validation_only, args.overwrite):
+                             args.arms, seeds, args.validation_only, args.overwrite, args.validation_metrics_dir):
         print(f"Wrote {path}")
 
 
