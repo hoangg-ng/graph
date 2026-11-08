@@ -28,9 +28,13 @@ p.add_argument('--model', required=True, choices=['gwnet', 'agcrn'])
 p.add_argument('--dataset', default='PEMS08')
 p.add_argument('--seed', type=int, default=0)
 p.add_argument('--device', default='cuda:0')
+p.add_argument('--sensor_emb', type=int, default=0, help='identity test: add a learned sensor embedding (gwnet, astgcn)')
+p.add_argument('--mixing', default='learned', choices=['learned', 'mean', 'self', 'random'],
+               help='train with the spatial mixing learned (default), fixed to the sensor mean, or off (self only)')
 p.add_argument('--epochs', type=int, default=100)
 a = p.parse_args()
 torch.manual_seed(a.seed); np.random.seed(a.seed)
+torch.backends.cuda.matmul.allow_tf32 = True; torch.backends.cudnn.allow_tf32 = True   # A100: faster matmuls (2026-11-08)
 dev = torch.device(a.device)
 
 z = np.load(f'{ROOT}/data_w288/{a.dataset}/his.npz')
@@ -51,7 +55,7 @@ def masked_mae(pred, y):
 UNIFORM = {'on': False}   # inference switch: replace the learned graph by the exact uniform mean
 import reimpl   # own reimplementations following the official code (running the cloned repos was not permitted)
 if a.model == 'gwnet':
-    model = reimpl.GWNet(N, in_dim=2, out_dim=12).to(dev)                  # official defaults, --aptonly
+    model = reimpl.GWNet(N, in_dim=2, out_dim=12, sensor_emb=bool(a.sensor_emb)).to(dev)                  # official defaults, --aptonly
     opt = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=1e-4)
     clip, patience = 5, None
 
@@ -74,6 +78,13 @@ else:
 def adjacency():
     model.uniform = False
     return model.adjacency()
+
+
+model.fixed = None if a.mixing == 'learned' else a.mixing
+if a.mixing == 'random':
+    from reimpl import make_random_mix
+    model.register_buffer('random_mix', make_random_mix(N, seed=1000 + a.seed).to(dev))
+TAG = ('' if a.mixing == 'learned' else '_' + a.mixing) + ('_emb' if a.sensor_emb else '')   # result-file suffix
 
 
 def batch(ix):
@@ -122,12 +133,12 @@ nb = np.r_[A[s_, d_], A[d_, s_]].mean() / off
 top = np.argsort(-A, 1)[:, :6]
 hit = np.mean([adj[i, [j for j in top[i] if j != i][:5]].mean() for i in range(N)])
 chance = adj.sum() / N / (N - 1)
-res = dict(model=a.model, dataset=a.dataset, seed=a.seed, test_mae=test, test_mae_graph_to_mean=test_uniform,
+res = dict(mixing=a.mixing, model=a.model, dataset=a.dataset, seed=a.seed, test_mae=test, test_mae_graph_to_mean=test_uniform,
            best_val=best, epochs=len(log), graph_entropy=float(H), road_neighbour_weight_vs_random=float(nb),
            top5_road_share=float(hit), top5_road_chance=float(chance),
            params=sum(t.numel() for t in model.parameters()), log=log)
 os.makedirs(f'{HERE}/results', exist_ok=True)
-json.dump(res, open(f'{HERE}/results/{a.model}_{a.dataset}_s{a.seed}.json', 'w'))
-torch.save(best_state, f'{HERE}/results/{a.model}_{a.dataset}_s{a.seed}.pt')
+json.dump(res, open(f'{HERE}/results/{a.model}_{a.dataset}_s{a.seed}{TAG}.json', 'w'))
+torch.save(best_state, f'{HERE}/results/{a.model}_{a.dataset}_s{a.seed}{TAG}.pt')
 print(f'RESULT {a.model} {a.dataset} test {test:.3f} | graph->mean {test_uniform:.3f} ({test_uniform - test:+.3f}) | '
       f'entropy {H:.3f} | road-neighbour weight {nb:.2f}x random | top-5 road {100 * hit:.1f}% (chance {100 * chance:.1f}%)')

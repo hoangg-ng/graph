@@ -27,9 +27,13 @@ p.add_argument('--model', required=True, choices=['mtgnn', 'staeformer', 'astgcn
 p.add_argument('--dataset', default='PEMS08')
 p.add_argument('--seed', type=int, default=0)
 p.add_argument('--device', default='cuda:0')
+p.add_argument('--sensor_emb', type=int, default=0, help='identity test: add a learned sensor embedding (gwnet, astgcn)')
+p.add_argument('--mixing', default='learned', choices=['learned', 'mean', 'self', 'random'],
+               help='train with the spatial mixing learned (default), fixed to the sensor mean, or off (self only)')
 p.add_argument('--epochs', type=int, default=None, help='override the recipe (smoke tests)')
 a = p.parse_args()
 torch.manual_seed(a.seed); np.random.seed(a.seed)
+torch.backends.cuda.matmul.allow_tf32 = True; torch.backends.cudnn.allow_tf32 = True   # A100: faster matmuls (2026-11-08)
 dev = torch.device(a.device)
 
 z = np.load(f'{ROOT}/data_w288/{a.dataset}/his.npz')
@@ -69,13 +73,20 @@ elif a.model == 'staeformer':
         return model(inp) * std + mean
 else:
     A = np.zeros((N, N)); A[src, dst] = 1                                          # official: A[i, j] = 1 per edge
-    model = reimpl2.ASTGCN(N, A).to(dev)
+    model = reimpl2.ASTGCN(N, A, sensor_emb=8 if a.sensor_emb else 0).to(dev)
     opt = torch.optim.Adam(model.parameters(), lr=1e-3)
     bs, epochs, patience, clip, lossf = 32, 80, None, None, 'mse'
 
     def run(x):
         return model(x[..., :1].permute(0, 2, 3, 1)) * std + mean                  # (b, N, 1, 12)
 epochs = a.epochs or epochs
+
+
+model.fixed = None if a.mixing == 'learned' else a.mixing
+if a.mixing == 'random':
+    from reimpl import make_random_mix
+    model.register_buffer('random_mix', make_random_mix(N, seed=1000 + a.seed).to(dev))
+TAG = ('' if a.mixing == 'learned' else '_' + a.mixing) + ('_emb' if a.sensor_emb else '')   # result-file suffix
 
 
 def batch(ix):
@@ -119,7 +130,7 @@ for ep in range(epochs):
         break
 model.load_state_dict(best_state)
 os.makedirs(f'{HERE}/results', exist_ok=True)
-torch.save(best_state, f'{HERE}/results/{a.model}_{a.dataset}_s{a.seed}.pt')   # save before the analysis
+torch.save(best_state, f'{HERE}/results/{a.model}_{a.dataset}_s{a.seed}{TAG}.pt')   # save before the analysis
 
 # ---------------------------------------------------------------- analysis
 test = evaluate('test')
@@ -141,10 +152,10 @@ nb = np.r_[M[src, dst], M[dst, src]].mean() / off
 top = np.argsort(-M, 1)[:, :6]
 hit = np.mean([adj[i, [j for j in top[i] if j != i][:5]].mean() for i in range(N)])
 chance = adj.sum() / N / (N - 1)
-res = dict(model=a.model, dataset=a.dataset, seed=a.seed, test_mae=test, test_mae_mixing_to_mean=test_uniform,
+res = dict(mixing=a.mixing, model=a.model, dataset=a.dataset, seed=a.seed, test_mae=test, test_mae_mixing_to_mean=test_uniform,
            best_val=best, epochs=len(log), mixing_entropy=H, entropy_support=support,
            road_neighbour_weight_vs_random=float(nb), top5_road_share=float(hit), top5_road_chance=float(chance),
            params=sum(t.numel() for t in model.parameters()), log=log)
-json.dump(res, open(f'{HERE}/results/{a.model}_{a.dataset}_s{a.seed}.json', 'w'))
+json.dump(res, open(f'{HERE}/results/{a.model}_{a.dataset}_s{a.seed}{TAG}.json', 'w'))
 print(f'RESULT {a.model} {a.dataset} test {test:.3f} | mixing->mean {test_uniform:.3f} ({test_uniform - test:+.3f}) | '
       f'entropy {H:.3f} over {support} | road-neighbour weight {nb:.2f}x random | top-5 road {100 * hit:.1f}% (chance {100 * chance:.1f}%)')

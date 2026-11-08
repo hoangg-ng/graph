@@ -27,7 +27,11 @@ ARMS = {
     'uniform0': (SCALES, 'uniform0'),   # pure node mean, no learned S- (proposal's 'global mean mixing')
     'nomix': (SCALES, 'nomix'),
     'nomix1': ((1,), 'nomix'),
-    'lite': ((1,), 'lite'),           # MAGE with the (collapsed) graph experts replaced by c_b * sensor mean       # MAGE with the spatial operator set to 0: value of space
+    'lite': ((1,), 'lite'),           # MAGE with the (collapsed) graph experts replaced by c_b * sensor mean
+    # 2026-11-07: slim + structure.  S_b(X) = c_b * mean(X) + d_b * G X
+    'lite_cof': ((1,), 'lite'),       # G fixed from training data: top-10 co-fluctuating sensors (no parameters)
+    'lite_road': ((1,), 'lite'),      # G fixed: row-normalised road adjacency (no parameters)
+    'lite_r2': ((1,), 'lite'), 'lite_r8': ((1,), 'lite'), 'lite_r32': ((1,), 'lite'),   # G learned, rank r (method A)       # MAGE with the spatial operator set to 0: value of space
     'learned': (SCALES, 'learned'),
 }
 KMAX = 8
@@ -67,11 +71,11 @@ class GraphOps:
 
 def stream_block(bk, Hs, bias, mode, gamma=None, lam_e=None, c=None):
     """One MAGE block (Pre_Norm_Transformer `bk`) applied to every scale stream."""
-    if mode == 'lite':   # no graph experts, router or lambda: U = H + c * mean_over_sensors(LN H)
+    if mode == 'lite':   # no graph experts, router or lambda: U = H + c(LN H), c = mean term (+ structure)
         out = []
         for H in Hs:
             X = bk.attn_norm(H)
-            U = H + c * X.mean(1, keepdim=True)
+            U = H + c(X)
             out.append(U + bk.ffn(bk.ffn_norm(U)))
         return out, torch.zeros(Hs[0].shape[0], Hs[0].shape[1], 1, dtype=torch.long, device=Hs[0].device)
     attn = bk.attn
@@ -125,7 +129,8 @@ class HierLinear(nn.Module):
 
 
 class MAGEStream(M.MAGE):
-    def __init__(self, model_args, arm='proposed', lam='mage', graph_fix=0, hier_rank=0, **kw):
+    def __init__(self, model_args, arm='proposed', lam='mage', graph_fix=0, hier_rank=0, fixed_graph=None,
+                 identity='learned', profile=None, **kw):
         super().__init__(model_args, **kw)
         self.arm = arm
         self.scales, self.mode = ARMS[arm]
@@ -144,6 +149,25 @@ class MAGEStream(M.MAGE):
             for bk in (self.backbone1, self.backbone2, self.backbone3):
                 del bk.attn
             self.c_logit = nn.Parameter(torch.full((3,), 0.5))
+            self.lite_kind = 'g' if arm in ('lite_cof', 'lite_road') else ('r' if arm.startswith('lite_r') else None)
+            if self.lite_kind:
+                self.d_logit = nn.Parameter(torch.zeros(3))                 # structure term starts switched off
+            if self.lite_kind == 'g':
+                assert fixed_graph is not None, 'lite_cof / lite_road need fixed_graph'
+                self.register_buffer('G', fixed_graph.float())
+            if self.lite_kind == 'r':
+                r_ = int(arm[6:])
+                self.U = nn.Parameter(torch.randn(3, N, r_)); self.V = nn.Parameter(torch.randn(3, r_, N))
+        # sensor identity (2026-11-08): 'learned' = MAGE's per-sensor embedding (default); 'profile' = a shared linear map
+        # of statistics computed from each sensor's training data (no per-sensor parameters; works for unseen sensors);
+        # 'none' = no sensor identity at all.
+        self.identity = identity
+        self.mean_mask = None                              # unseen-sensor test: average only over training sensors
+        if identity != 'learned':
+            self.prompt.spatial_prompt = nn.Parameter(torch.zeros_like(self.prompt.spatial_prompt), requires_grad=False)
+        if identity == 'profile':
+            self.register_buffer('profile', profile.float())
+            self.prof_proj = nn.Linear(profile.shape[1], model_args.model_dim)
         if graph_fix:
             for bk in (self.backbone1, self.backbone2, self.backbone3):
                 nn.init.normal_(bk.attn.E1, 0, 1.0); nn.init.normal_(bk.attn.E2, 0, 1.0)
@@ -159,13 +183,30 @@ class MAGEStream(M.MAGE):
             raise ValueError(lam)
 
     def c(self, i):
-        return torch.tanh(self.c_logit[i]) if self.mode == 'lite' else None
+        if self.mode != 'lite':
+            return None
+
+        def spatial(X):                       # X: (b, N, f)
+            if self.mean_mask is not None and self.training:
+                M = X[:, self.mean_mask].mean(1, keepdim=True)
+            else:
+                M = X.mean(1, keepdim=True)
+            S = torch.tanh(self.c_logit[i]) * M
+            if self.lite_kind == 'g':
+                S = S + torch.tanh(self.d_logit[i]) * torch.matmul(self.G, X)
+            elif self.lite_kind == 'r':       # rank-r learned graph softmax(U) softmax(V), applied in factorised form
+                GX = torch.softmax(self.U[i], -1) @ (torch.softmax(self.V[i], -1) @ X)
+                S = S + torch.tanh(self.d_logit[i]) * GX
+            return S
+        return spatial
 
     def lam_e(self, i):
         return torch.sigmoid(self.lam_logit[i]) if self.lam_kind == 'sigmoid' else None
 
     def forward(self, x, label=None, bias=(0, 0, 0)):
         prompt = self.prompt(x)
+        if self.identity == 'profile':
+            prompt = prompt + self.prof_proj(self.profile)
         if self.hier:
             tod = (x[:, -1, 0, -2] * 288).round().long().clamp(0, 287)
             dow = (x[:, -1, 0, -1] * 7).round().long().clamp(0, 6)
@@ -198,3 +239,60 @@ def graph_entropy(model):
         p = torch.softmax(bk.attn.E2[0].detach().float(), -1)
         out.append((-(p * p.clamp_min(1e-12).log()).sum(-1) / torch.log(torch.tensor(float(p.shape[-1])))).mean().item())
     return out
+
+
+def fixed_graph(kind, data, train_end, edges, k=10):
+    """Parameter-free graphs for lite_cof / lite_road, built from the TRAINING span only.
+    cof : each sensor's top-k sensors by correlation of anomalies (value minus the usual slot-of-week value), weights =
+          correlations (clipped at 0), row-normalised.   road: symmetric road adjacency, row-normalised."""
+    import numpy as np
+    N = data.shape[1]
+    if kind == 'road':
+        A = np.zeros((N, N)); A[edges[0], edges[1]] = 1; A = np.maximum(A, A.T)
+    else:
+        x = data[:train_end, :, 0]
+        sw = (np.rint(data[:train_end, 0, -1] * 7).astype(int) % 7) * 288 + np.rint(data[:train_end, 0, -2] * 288).astype(int) % 288
+        usual = np.zeros((2016, N))
+        for i in range(2016):
+            m = sw == i
+            if m.any():
+                usual[i] = x[m].mean(0)
+        R = np.nan_to_num(np.corrcoef((x - usual[sw]).T)); np.fill_diagonal(R, -np.inf)
+        A = np.zeros((N, N)); top = np.argsort(-R, 1)[:, :k]
+        for i in range(N):
+            A[i, top[i]] = np.clip(R[i, top[i]], 0, None)
+    A = A / np.clip(A.sum(1, keepdims=True), 1e-9, None)
+    return torch.tensor(A, dtype=torch.float32)
+
+
+def sensor_profile(data, train_end, mask=None):
+    """Computed sensor profile (2026-11-08), training span only: what the learned sensor embeddings were found to
+    encode. Per sensor: hourly weekday and weekend mean profiles (24 + 24, standardised per sensor), log volume,
+    log(AM peak / PM peak), and slope and R^2 on the network-average anomaly (average over `mask` sensors if given).
+    Returns an (N, 52) tensor, columns standardised across sensors."""
+    import numpy as np
+    x = data[:train_end, :, 0]
+    N = x.shape[1]
+    slot = np.rint(data[:train_end, 0, -2] * 288).astype(int) % 288
+    dow = np.rint(data[:train_end, 0, -1] * 7).astype(int) % 7
+    hour = slot // 12
+    wd = np.stack([x[(hour == h) & (dow < 5)].mean(0) for h in range(24)], 1)          # N x 24
+    we = np.stack([x[(hour == h) & (dow >= 5)].mean(0) for h in range(24)], 1)
+    vol = x.mean(0)
+    std = lambda m: (m - m.mean(1, keepdims=True)) / (m.std(1, keepdims=True) + 1e-6)
+    sw = dow * 288 + slot
+    usual = np.zeros((2016, N))
+    for i in range(2016):
+        m = sw == i
+        if m.any():
+            usual[i] = x[m].mean(0)
+    a = x - usual[sw]; a = (a - a.mean(0)) / (a.std(0) + 1e-6)
+    g = a[:, mask].mean(1) if mask is not None else a.mean(1)
+    slope = (a * g[:, None]).sum(0) / (g ** 2).sum()
+    share = 1 - ((a - g[:, None] * slope) ** 2).mean(0) / a.var(0)
+    am = np.stack([x[(slot // 12 == h) & (dow < 5)].mean(0) for h in (7, 8)]).max(0)
+    pm = np.stack([x[(slot // 12 == h) & (dow < 5)].mean(0) for h in (16, 17)]).max(0)
+    lv = np.log(np.clip(vol - vol.min() + 1, 1e-6, None))
+    F = np.c_[std(wd), std(we), lv, np.log(np.clip(am - am.min() + 1, 1e-6, None)) - np.log(np.clip(pm - pm.min() + 1, 1e-6, None)), slope, share]
+    F = (F - F.mean(0)) / (F.std(0) + 1e-6)
+    return torch.tensor(np.nan_to_num(F), dtype=torch.float32)

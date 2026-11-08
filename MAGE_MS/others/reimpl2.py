@@ -13,6 +13,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from reimpl import override
 
 
 def summarise(att):
@@ -58,8 +59,9 @@ class MixProp(nn.Module):
 
     def forward(self, x, adj):
         n = adj.size(0)
-        if self.owner[0].uniform:
-            a = torch.full_like(adj, 1.0 / n)
+        o = override(self.owner[0], adj)
+        if o is not None:
+            a = o
         else:
             adj = adj + torch.eye(n, device=x.device)
             a = adj / adj.sum(1).view(-1, 1)
@@ -97,7 +99,7 @@ class MTGNN(nn.Module):
     def __init__(self, N, in_dim=2, out_dim=12, seq=12, layers=3, dropout=0.3, k=20, node_dim=40, gdep=2,
                  cc=32, rc=32, sc=64, ec=128, propalpha=0.05, tanhalpha=3):
         super().__init__()
-        self.uniform, self.dropout, self.layers, self.seq = False, dropout, layers, seq
+        self.uniform, self.fixed, self.dropout, self.layers, self.seq = False, None, dropout, layers, seq
         self.gc = GraphConstructor(N, k, node_dim, tanhalpha)
         self.register_buffer('idx', torch.arange(N))
         ks = 7
@@ -147,10 +149,10 @@ class Attention(nn.Module):
         q, k, v = self.FC_Q(x), self.FC_K(x), self.FC_V(x)
         q, k, v = (torch.cat(torch.split(t, self.hd, dim=-1), 0) for t in (q, k, v))
         owner = self.owner[0]
-        if owner is not None and owner.uniform:
-            att = torch.full(q.shape[:-1] + (k.shape[-2],), 1.0 / k.shape[-2], device=x.device)
-        else:
-            att = torch.softmax(q @ k.transpose(-1, -2) / self.hd ** 0.5, -1)
+        att = torch.softmax(q @ k.transpose(-1, -2) / self.hd ** 0.5, -1)
+        if owner is not None:
+            o = override(owner, att)
+            att = att if o is None else o
         if owner is not None and owner.record is not None:
             owner.record.append(summarise(att.detach()))
         out = torch.cat(torch.split(att @ v, B, dim=0), -1)
@@ -178,7 +180,7 @@ class STAEformer(nn.Module):
 
     def __init__(self, N, T=12, H=12, input_dim=3, ie=24, te=24, de=24, ae=80, ff=256, heads=4, layers=3, dropout=0.1):
         super().__init__()
-        self.uniform, self.record, self.N, self.T, self.H = False, None, N, T, H
+        self.uniform, self.fixed, self.record, self.N, self.T, self.H = False, None, None, N, T, H
         self.input_proj = nn.Linear(input_dim, ie)
         self.tod_embedding, self.dow_embedding = nn.Embedding(288, te), nn.Embedding(7, de)
         self.adaptive_embedding = nn.init.xavier_uniform_(nn.Parameter(torch.empty(T, N, ae)))
@@ -224,8 +226,9 @@ class SpatialAttention(nn.Module):
         rhs = (self.W3 @ x).transpose(-1, -2)
         S = F.softmax(self.Vs @ torch.sigmoid(lhs @ rhs + self.bs), dim=1)
         o = self.owner[0]
-        if o.uniform:
-            S = torch.full_like(S, 1.0 / S.shape[1])
+        ov = override(o, S)
+        if ov is not None:
+            S = ov
         if o.record is not None:
             o.record.append(summarise(S.detach().transpose(1, 2)))   # softmax was over dim 1: rows = transpose
         return S
@@ -283,9 +286,12 @@ class ASTGCN(nn.Module):
     """Official PEMS config: 2 blocks, K = 3, 64 Chebyshev / 64 time filters, stride 1, in_channels 1, 12 -> 12;
     road adjacency A[i, j] = 1 for each edge of the distance file; xavier / uniform init."""
 
-    def __init__(self, N, A, T=12, H=12, cin=1, blocks=2, K=3, nf=64, nt=64):
+    def __init__(self, N, A, T=12, H=12, cin=1, blocks=2, K=3, nf=64, nt=64, sensor_emb=0):
         super().__init__()
-        self.uniform, self.record = False, None
+        self.uniform, self.fixed, self.record = False, None, None
+        # identity test (2026-11-08): optional learned sensor embedding of size `sensor_emb`, fed as extra input channels
+        self.sensor_emb = nn.Parameter(torch.empty(N, sensor_emb)) if sensor_emb else None
+        cin = cin + sensor_emb
         cheb = [torch.tensor(c, dtype=torch.float32) for c in cheb_polynomials(A, K)]
         self.blocks = nn.ModuleList([ASTGCNBlock(cin, K, nf, nt, 1, cheb, N, T, self)] +
                                     [ASTGCNBlock(nt, K, nf, nt, 1, cheb, N, T, self) for _ in range(blocks - 1)])
@@ -294,6 +300,9 @@ class ASTGCN(nn.Module):
             nn.init.xavier_uniform_(p) if p.dim() > 1 else nn.init.uniform_(p)
 
     def forward(self, x):                      # x: (b, N, 1, T) -> (b, H, N)
+        if self.sensor_emb is not None:
+            e = self.sensor_emb[None, :, :, None].expand(x.shape[0], -1, -1, x.shape[-1])
+            x = torch.cat([x, e], 2)
         for blk in self.blocks:
             x = blk(x)
         return self.final_conv(x.permute(0, 3, 1, 2))[..., -1]

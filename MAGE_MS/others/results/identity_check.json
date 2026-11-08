@@ -1,0 +1,102 @@
+{
+ "PEMS08": {
+  "MAGE sensor embedding": {
+   "log volume": 0.7659781575202942,
+   "commute (AM/PM)": 0.1518746018409729,
+   "profile shape PC1": 0.7848304510116577,
+   "profile shape PC2": 0.3957638740539551,
+   "loading on network signal": 0.5050557334788862,
+   "network-signal share": 0.6250035305341582
+  },
+  "AGCRN node embedding": {
+   "log volume": 0.3258577585220337,
+   "commute (AM/PM)": -0.0021941661834716797,
+   "profile shape PC1": 0.06337845325469971,
+   "profile shape PC2": -0.05608510971069336,
+   "loading on network signal": -0.07007103872612386,
+   "network-signal share": -0.06384263888704078
+  },
+  "Graph WaveNet graph vectors": {
+   "log volume": 0.2077445387840271,
+   "commute (AM/PM)": -0.02290523052215576,
+   "profile shape PC1": 0.16669988632202148,
+   "profile shape PC2": -0.08818793296813965,
+   "loading on network signal": 0.08698216427614947,
+   "network-signal share": 0.09609529710992692
+  },
+  "MTGNN graph embeddings": {
+   "log volume": -0.04554760456085205,
+   "commute (AM/PM)": 0.02174079418182373,
+   "profile shape PC1": 0.00893700122833252,
+   "profile shape PC2": -0.13529157638549805,
+   "loading on network signal": -0.17281384637850783,
+   "network-signal share": -0.2036099096262478
+  },
+  "STAEformer adaptive embedding": {
+   "log volume": 0.782392144203186,
+   "commute (AM/PM)": 0.5312215089797974,
+   "profile shape PC1": 0.5343661308288574,
+   "profile shape PC2": 0.5130740404129028,
+   "loading on network signal": 0.6415527448502385,
+   "network-signal share": 0.5550685623139321
+  },
+  "random (reference)": {
+   "log volume": -0.041463301667595154,
+   "commute (AM/PM)": -0.01767482568094869,
+   "profile shape PC1": -0.01770146328490041,
+   "profile shape PC2": -0.032846052161357386,
+   "loading on network signal": -0.07225785697123688,
+   "network-signal share": -0.09314963698543144
+  }
+ },
+ "PEMS04": {
+  "MAGE sensor embedding": {
+   "log volume": 0.9327760934829712,
+   "commute (AM/PM)": 0.6881430149078369,
+   "profile shape PC1": 0.8702071309089661,
+   "profile shape PC2": 0.6573633551597595,
+   "loading on network signal": 0.5649940863406698,
+   "network-signal share": 0.5313377558248165
+  },
+  "AGCRN node embedding": {
+   "log volume": 0.815159261226654,
+   "commute (AM/PM)": 0.29089945554733276,
+   "profile shape PC1": 0.614005982875824,
+   "profile shape PC2": 0.18510591983795166,
+   "loading on network signal": 0.15102456023396182,
+   "network-signal share": 0.1810095644152101
+  },
+  "Graph WaveNet graph vectors": {
+   "log volume": 0.031102240085601807,
+   "commute (AM/PM)": 0.19385379552841187,
+   "profile shape PC1": 0.08592849969863892,
+   "profile shape PC2": 0.12303578853607178,
+   "loading on network signal": -0.10272595343302648,
+   "network-signal share": -0.04905973883491832
+  },
+  "MTGNN graph embeddings": {
+   "log volume": -0.062009334564208984,
+   "commute (AM/PM)": 0.0625913143157959,
+   "profile shape PC1": 0.21734225749969482,
+   "profile shape PC2": 0.011107921600341797,
+   "loading on network signal": 0.050481368865380793,
+   "network-signal share": 0.021920932173097984
+  },
+  "STAEformer adaptive embedding": {
+   "log volume": 0.9234596490859985,
+   "commute (AM/PM)": 0.7115002870559692,
+   "profile shape PC1": 0.8795949220657349,
+   "profile shape PC2": 0.7315531969070435,
+   "loading on network signal": 0.6591411868968966,
+   "network-signal share": 0.6004384876674509
+  },
+  "random (reference)": {
+   "log volume": -0.050221996983947914,
+   "commute (AM/PM)": -0.009601547951025635,
+   "profile shape PC1": -0.00462656532248662,
+   "profile shape PC2": -0.017737198344272675,
+   "loading on network signal": -0.04368620216212471,
+   "network-signal share": 0.0007585153138718326
+  }
+ }
+}

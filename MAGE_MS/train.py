@@ -54,6 +54,14 @@ def main():
     p.add_argument('--out', required=True)
     p.add_argument('--graph_fix', type=int, default=0, help='step 8 only: spread-out E1/E2 init and no weight decay on them')
     p.add_argument('--hier_rank', type=int, default=0, help='step 8 only: rank of the time and sensor levels (0 = off)')
+    p.add_argument('--switch_at', type=int, default=0,
+                   help='method B (arm mage): after this epoch, if every block\'s graph entropy > 0.99, replace the '
+                        'graph experts by the slim mean term (keep all other weights) and continue')
+    p.add_argument('--identity', default='learned', choices=['learned', 'profile', 'none'],
+                   help='step 8 only: sensor identity = learned embedding, computed profile, or none')
+    p.add_argument('--holdout', type=float, default=0.0,
+                   help='unseen-sensor test: fraction of sensors excluded from training (loss and network average)')
+    p.add_argument('--log_graph', type=int, default=0, help='step 8 only: print graph entropy after every epoch')
     p.add_argument('--tf32', type=int, default=0, help='1: TF32 matmuls (Ampere+; faster, ~1e-3 relative precision)')
     a = p.parse_args()
 
@@ -77,14 +85,30 @@ def main():
                             second=0, minute=288, hour=0, day=7, week=0, weekday=0, month=0,
                             quarter=0, year=0, bs=a.bs)
     models.use_linear_contraction(True)
+    G = None
+    if a.arm in ('lite_cof', 'lite_road'):
+        import pandas as pd
+        e = pd.read_csv(f'{ROOT}/raw/ASTGNN/data/{a.dataset}/{a.dataset}.csv')
+        G = streams.fixed_graph('cof' if a.arm == 'lite_cof' else 'road', z['data'], int(idx['train'][-1]) + 1,
+                                (e.iloc[:, 0].values, e.iloc[:, 1].values))
+    hold = None
+    if a.holdout > 0:
+        rng = np.random.default_rng(123)
+        hold = np.zeros(N, bool); hold[rng.choice(N, int(round(a.holdout * N)), replace=False)] = True
+    prof = streams.sensor_profile(z['data'], int(idx['train'][-1]) + 1, None if hold is None else ~hold) if a.identity == 'profile' else None
     if a.arm:
-        model = streams.MAGEStream(margs, arm=a.arm, lam=a.lam, graph_fix=a.graph_fix, hier_rank=a.hier_rank, node_num=N, input_dim=C, output_dim=1,
+        model = streams.MAGEStream(margs, arm=a.arm, lam=a.lam, graph_fix=a.graph_fix, hier_rank=a.hier_rank, fixed_graph=G,
+                                   identity=a.identity, profile=prof, node_num=N, input_dim=C, output_dim=1,
                                    seq_len=a.seq_len, horizon=a.horizon).to(dev)
         n_enc = model.encoder_params()
     else:
         model = models.MAGEX(margs, encoder=a.encoder, node_num=N, input_dim=C, output_dim=1,
                              seq_len=a.seq_len, horizon=a.horizon).to(dev)
         n_enc = models.n_params(model.encoder)
+    train_cols = slice(None)
+    if hold is not None:
+        model.mean_mask = torch.from_numpy(~hold).to(dev)
+        train_cols = torch.from_numpy(np.where(~hold)[0]).to(dev)
     n_total = models.n_params(model)
     print(f'{a.dataset} {a.arm or a.encoder} T={a.seq_len} seed={a.seed} params={n_total} enc={n_enc}', flush=True)
 
@@ -114,7 +138,7 @@ def main():
         for ix in perm.split(a.bs):
             x, y = batch(ix)
             out, counts = model(x, bias=bias)
-            loss = masked_metrics(out[..., 0] * std + mean, y)[0]
+            loss = masked_metrics((out[..., 0] * std + mean)[..., train_cols], y[..., train_cols])[0]
             opt.zero_grad(set_to_none=True); loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), 5)
             opt.step()
@@ -123,8 +147,30 @@ def main():
             losses.append(loss.item())
         torch.cuda.synchronize(dev); ep_times.append(time.time() - t0)
         sched.step()
-        vmae = masked_metrics(*predict('val'))[0].item()
+        Pv, Yv = predict('val')
+        vmae = masked_metrics(Pv[..., train_cols], Yv[..., train_cols])[0].item()   # held-out sensors never used for selection
         log.append((ep + 1, float(np.mean(losses)), vmae))
+        if a.arm == 'mage' and a.switch_at and ep + 1 == a.switch_at and not hasattr(model, 'switched'):
+            ent = streams.graph_entropy(model)
+            print(f'switch check ep {ep + 1}: graph entropy ' + ' '.join(f'{v:.4f}' for v in ent), flush=True)
+            if min(ent) > 0.99:                       # collapsed: swap experts for c_b * mean, keep everything else
+                lite = streams.MAGEStream(margs, arm='lite', node_num=N, input_dim=C, output_dim=1,
+                                          seq_len=a.seq_len, horizon=a.horizon).to(dev)
+                own = model.state_dict(); new = lite.state_dict()
+                lite.load_state_dict({k: (own[k] if k in own and own[k].shape == v.shape else v) for k, v in new.items()})
+                with torch.no_grad():                 # collapsed MAGE computes (1 - lambda_b) * mean per block
+                    coef = torch.tensor([1 + bk.attn.cal_lambda().item() for bk in (model.backbone1, model.backbone2, model.backbone3)])
+                    lite.c_logit.copy_(torch.atanh(coef.clamp(-0.95, 0.95)))
+                lr_now = opt.param_groups[0]['lr']
+                model = lite; model.switched = ep + 1
+                opt = torch.optim.Adam(model.parameters(), lr=lr_now, weight_decay=a.wd)
+                sched = torch.optim.lr_scheduler.MultiStepLR(opt, milestones=[m - ep - 1 for m in [1, 30, 50, 70, 90, 130, 170, 210, 250, 290, 300] if m > ep + 1], gamma=0.5)
+                best, best_state, wait = float('inf'), None, 0
+                n_total = models.n_params(model)
+                print(f'switched to slim model at epoch {ep + 1}: {n_total} params', flush=True)
+                continue
+        if a.arm and a.log_graph:   # per-epoch graph uniformity (1.0 = every expert is the sensor mean)
+            print(f'graph_entropy ep {ep + 1} ' + ' '.join(f'{v:.4f}' for v in streams.graph_entropy(model)), flush=True)
         if vmae < best:
             best, wait = vmae, 0
             best_state = ({k: v.detach().clone() for k, v in model.state_dict().items()}, bias.clone())
@@ -138,11 +184,18 @@ def main():
     P, Y = predict('test')
     per_h = [[v.item() for v in masked_metrics(P[:, h], Y[:, h])] for h in range(a.horizon)]
     avg = [v.item() for v in masked_metrics(P, Y)]
+    unseen = None
+    if hold is not None:                       # accuracy on the sensors never used in training, and on the others
+        hc = torch.from_numpy(np.where(hold)[0]).to(dev)
+        unseen = dict(unseen_mae=masked_metrics(P[..., hc], Y[..., hc])[0].item(),
+                      seen_mae=masked_metrics(P[..., train_cols], Y[..., train_cols])[0].item())
+        print(f'unseen sensors MAE {unseen["unseen_mae"]:.3f} | seen sensors MAE {unseen["seen_mae"]:.3f}', flush=True)
     res = dict(vars(a), params=n_total, enc_params=n_enc, epochs_run=len(log), best_val_mae=best,
                test_mae=avg[0], test_rmse=avg[1], test_mape=avg[2], per_horizon=per_h,
                train_s_per_epoch=float(np.mean(ep_times)),
                peak_mem_mb=torch.cuda.max_memory_allocated(dev) / 2**20, log=log,
-               graph_entropy=streams.graph_entropy(model) if a.arm else None)
+               graph_entropy=streams.graph_entropy(model) if a.arm else None,
+               switched_at=getattr(model, 'switched', None), unseen=unseen)
     os.makedirs(os.path.dirname(os.path.abspath(a.out)), exist_ok=True)
     # best weights + balancing bias, for the routing / regime analyses (re-run predictions later)
     ck = os.path.join(os.path.dirname(os.path.abspath(a.out)), 'ckpt', os.path.basename(a.out).replace('.json', '.pt'))

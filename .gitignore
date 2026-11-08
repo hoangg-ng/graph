@@ -1,7 +1,7 @@
 # This folder also holds unrelated projects; only the MAGE study is tracked.
 /*
 !/.gitignore
-!/proposal.md
+!/README.md
 !/research_design.md
 !/experiment_log.md
 !/MAGE_MS/

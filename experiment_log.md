@@ -1,12 +1,36 @@
-# Experiment log: multi-scale MAGE study
+# Experiment log: from multi-scale MAGE to what adaptive graphs learn
 
-The important results, one entry per experiment and oldest first. Full design, tables and discussion are in `research_design.md`. The proposal under test is `proposal.md`.
+The important results, one entry per experiment and oldest first. Full design, tables and discussion are in `research_design.md`. The original proposal is summarised under "Archived documents" below; the main findings are in `README.md`.
 
 Metric: masked test MAE on traffic flow, mean ± sd over 5 seeds unless stated. "4/5" means better in 4 of 5 seeds, paired by seed. Decision rule throughout: an idea "helps" only with a lower mean **and** ≥ 4/5 seeds better.
 
 Code and result files are in `MAGE_MS/`.
 
 ---
+
+> **Repository cleanup (2026-11-08).** Training stdout logs, Python caches, the five cloned upstream repositories and the one-off launchers (`run_more`, `run_space*`, `run_step8`, `run_long`, `run_grid`, `run_hier`, `run_pems04`, `run_lite`, `summarize_*`) were removed; the launchers are in git history (commit 76a7d67 and earlier). Every run's final metrics and per-epoch curve remain in its result `.json`. Checkpoints were kept only where an analysis loads them (`diag_lambda.py`, `diag_useful.py`, `others/what_graphs_learn.py`, `identity_check.py`, `rq_test.py`) plus the official-code MAGE checkpoints; references to other `.pt` files or `logs/` below are historical.
+
+## Archived documents (summarised here and removed on 2026-11-08)
+
+**Original proposal (`proposal.md`, 2026-11-01; in git history).** *Research question:* does stronger spatial mixing at coarser temporal resolutions improve traffic forecasting compared with uniform, reversed or independent mixing? *Method:* 96 → 12 steps on traffic flow; average-pool the input into 5 / 10 / 20 / 40-min scales with TimeMixer-style encoding; one shared MAGE-style spatial operator applied with a different power per scale. *Variants:* Shared (1, 1, 1, 1), Proposed (1, 2, 4, 8), Reversed (8, 4, 2, 1, the key equal-compute comparison), Independent (separate operator per scale), Uniform (global mean). *Design:* PEMS04 primary, PEMS08 confirmation, chronological 60/20/20, 5 / 3 seeds, MAE / RMSE / MAPE, parameters, runtime, memory. *Outcome:* negative (step 8 and the 2026-11-02 / 2026-11-06 entries below); it led to the graph-collapse and sensor-identity findings in `README.md`.
+
+**Reviewer comments on the proposal vs. the code (`comment.md`, 2026-11-02).** Eleven concerns and how they were resolved (details in the 2026-11-02 entry and `research_design.md`):
+
+| concern | resolution |
+|---|---|
+| TimeMixer PDM blocks not implemented | true; linear per-scale encoders chosen because nonlinear encoders overfit at T = 96 (step 7) |
+| spatial-mixing powers implemented incorrectly | not supported: factorised powers equal dense matrix powers (error 3e-16) |
+| one unconstrained λ instead of per-expert sigmoid-bounded ones | matches MAGE's own design; the bounded variant was tested (small gain) |
+| hyper-residual connections not removed | kept on purpose to reproduce MAGE exactly; the proposal did not ask to remove them |
+| RMSNorm instead of LayerNorm | MAGE's own norm; documentation wording fixed |
+| prediction head uses an intermediate block | MAGE's own two-decoder head |
+| Uniform baseline keeps a learned negative graph | valid; a pure-uniform arm was added (`uniform0`) |
+| speed and occupancy used as inputs | matches MAGE's official PEMS configuration; flow-only is a deviation from the proposal, not from MAGE |
+| forecast targets overlap across split boundaries | true but negligible (11 timesteps, ~0.3 % of samples); standard LargeST protocol |
+| Independent variant missing | true; dropped once the direction was closed |
+| masking does not handle all-zero targets or NaN | cannot occur in these datasets (no NaN, no all-zero time step); MAPE masking correct |
+
+**Review and verdict of an earlier design (`REVIEW.md`, `VERDICT.md`, 2026-09-22).** They concern a different, earlier plan: temporal fixed-aggregation features (FAF-style neighbourhood summaries of trends) plus FAM-style input modulation, on synthetic and traffic data. Main points: with linear summaries the plan reduces to a spatial lag of trend features; its headline result was already published by SimST (fixed one-hop and neighbour-average features + MLP rival STGNNs at 39× throughput); `P²` leaks a node's own signal (diagonal mass 0.23) unless an exact 2-hop operator is used; **wide fixed neighbourhoods converge to the global mean** (correlation 0.44), consistent with the later finding that a global average is what learned graphs compute; and the open direction it recommended was **robustness of fixed vs. learned aggregation under temporal distribution shift**, still untested here.
 
 ## 2026-10-18 · Step 1: MAGE reproduction
 - Official MAGE code, 3 seeds: PEMS08 13.95, PEMS04 18.29. Our re-implementation (model 1): 13.96 / 18.25. They match.
@@ -64,7 +88,7 @@ Code and result files are in `MAGE_MS/`.
 - After removing the network-wide common signal, correlation fades within about 3 hops (about 1 km) at every scale.
 - **Implication:** scale changes the strength of spatial coupling, not its range.
 
-## 2026-10-31 · Step 8: proposal.md, scale-dependent spatial mixing (`results/step8/`)
+## 2026-10-31 · Step 8: original proposal, scale-dependent spatial mixing (`results/step8/`)
 Setup: PEMS08, 96 → 12. Four scale streams (5 / 10 / 20 / 40 min) share one MAGE graph, and each stream applies P^k.
 
 Unit tests passed:
@@ -92,7 +116,7 @@ Unit tests passed:
 - **Seed variance doubles** (sd 0.09 vs 0.044).
 
 ## 2026-11-02 · Review follow-up: Reversed, pure uniform, λ, and where space matters
-Prompted by `comment.md` (review of the proposal against the code). Step 8 arms on PEMS08, T = 96, 5 seeds (`results/step8/`):
+Prompted by the reviewer comments on the proposal vs. the code (see "Archived documents"). Step 8 arms on PEMS08, T = 96, 5 seeds (`results/step8/`):
 
 | variant | MAE | vs linear MAGE 13.802 (paired) |
 |---|---|---|
@@ -239,9 +263,122 @@ Graph WaveNet, AGCRN, MTGNN, STAEformer and ASTGCN, reimplemented from the offic
 - Swaps measure reliance, not necessity: whether a model trained from scratch with the average (or average + a small low-rank graph) matches the original is still untested.
 - Size of the learned spatial part: MAGE 56–69 % of parameters, ASTGCN 65–84 %, STAEformer up to 56–60 % (whole spatial stack), MTGNN 5 %, Graph WaveNet 1–2 %, AGCRN < 0.5 %. Parameter savings from removing it are only possible for MAGE, ASTGCN and STAEformer.
 
-## Not done yet (proposal.md and plan)
-- **proposal.md variants:** Independent (Reversed done 2026-11-02).
-- **Primary dataset:** PEMS04, which proposal.md calls primary.
+## 2026-11-07 · What do learned graphs encode, if not roads? (`MAGE_MS/others/what_graphs_learn.py`, `others/results/what_graphs_learn.json`)
+The 10 trained cross-model runs plus MAGE with the graph fix. Learned mixing matrix M vs pairwise sensor properties from the training span: road hop distance, daily-profile similarity, commute direction (AM / PM peak ratio), volume, co-fluctuation (correlation of deviations from the usual weekly pattern). "top5" = mean percentile of the property over each sensor's 5 strongest links (0.50 = random).
+
+| model | road | daily profile | commute | volume | co-fluctuation | hub share* (08 / 04) |
+|---|---|---|---|---|---|---|
+| Graph WaveNet | 0.54 / 0.51 | 0.48 / 0.46 | 0.50 / 0.48 | 0.48 / 0.47 | 0.54 / 0.52 | 26 % / 38 % |
+| AGCRN | 0.57 / 0.57 | 0.53 / **0.70** | 0.51 / 0.61 | **0.62 / 0.70** | **0.72 / 0.66** | 50 % / 25 % |
+| MTGNN | 0.62 / 0.55 | 0.59 / 0.61 | 0.51 / 0.59 | 0.63 / 0.61 | **0.73 / 0.78** | 35 % / 53 % |
+| STAEformer | 0.59 / 0.58 | 0.31 / 0.28 | 0.30 / 0.19 | **0.08** / 0.23 | 0.43 / 0.40 | **100 % / 100 %** |
+| ASTGCN | 0.45 / 0.44 | 0.47 / 0.52 | 0.48 / 0.57 | 0.42 / 0.40 | 0.48 / 0.43 | **80 % / 85 %** |
+| MAGE, graph fix | 0.62 / 0.58 | 0.48 / 0.59 | 0.55 / 0.53 | 0.56 / 0.53 | **0.71 / 0.75** | 65 % / 68 % |
+
+top5 percentiles shown as PEMS08 / PEMS04. *Hub share = share of all top-5 link slots that go to the 5 % most-chosen sensors (≈ 5 % if links were spread evenly).
+
+- **Over all pairs, learned link strength is unrelated to roads, daily pattern or commute direction** (Spearman |ρ| ≤ 0.1 for most model–property pairs; largest: AGCRN with volume, ρ = 0.29–0.31).
+- **The strongest links of the embedding-based graphs (AGCRN, MTGNN, MAGE graph fix) join sensors that co-fluctuate** (66–78th percentile), only weakly related to road distance (ρ = 0.21 / 0.04). Graph WaveNet's strongest links are at random on every property.
+- **Every learned graph is hub-dominated**: 25–68 % of all top-5 slots go to 5 % of the sensors for the graph models, 80–100 % for the attention models (in STAEformer every sensor's 5 strongest links go to the same few sensors).
+- **What the hubs are:** in MTGNN and MAGE (graph fix), and AGCRN on PEMS08, hubs track the network-wide signal better than average sensors (0.55–0.63 vs 0.34–0.46): the graph reaches the common signal through a few representative sensors. Graph WaveNet's hubs are high-volume sensors (ρ = 0.51–0.53 with volume). Attention hubs (STAEformer, ASTGCN) are neither representative nor high-volume, consistent with attention "sinks".
+- **Reading:** learned spatial modules mostly learn a global summary (an exact mean in MAGE, a few representative or high-volume hubs in the graph models, a few sink sensors in attention) plus links between co-fluctuating sensors, not local road structure. 1 seed per model; hub and sink interpretations need a seed check.
+
+## 2026-11-07 · Slim MAGE + structure, method A (grow from the mean), method B (switch after collapse), gain decomposition (`MAGE_MS/run_ab.py`)
+All seed 0. Differences under ~0.05–0.08 MAE are seed noise.
+
+**MAGE variants** (T = 96 → 12; `results/ab/`, baselines from `results/pems04`, `results/hier`, `results/lite`). Test MAE (validation MAE):
+
+| variant | PEMS08 | PEMS04 | params (08 / 04) |
+|---|---|---|---|
+| MAGE | 13.785 (14.099) | 18.291 (18.009) | 1,868,750 / 2,728,014 |
+| slim = average only (rank 0) | 13.791 (**14.111**) | 18.191 (**17.984**) | 718,235 / 735,771 |
+| slim + fixed co-fluctuation graph | 13.873 (14.167) | 18.263 (17.965) | +3 |
+| slim + fixed road graph | 13.870 (14.197) | 18.169 (17.983) | +3 |
+| slim + learned rank-2 graph | 13.887 (14.184) | 18.220 (17.984) | +2k / +4k |
+| slim + learned rank-8 graph | 13.853 (14.160) | 18.214 (17.991) | +8k / +15k |
+| slim + learned rank-32 graph | 13.812 (14.152) | 18.290 (18.027) | +33k / +59k |
+| method B: MAGE, switched to slim after epoch 1 | 13.828 (14.187) | 18.364 (18.072) | 718,235 / 735,771 after epoch 1 |
+
+- No structure added on top of the average helps: co-fluctuation, road and learned low-rank graphs are all within noise of slim MAGE, and none improves validation consistently.
+- **Method A** (start from the average, add rank 2 → 8 → 32 only while validation improves) **selects rank 0 on both datasets**: the average alone. The search costs two small models (rank 0, rank 2), never the full MAGE.
+- **Method B** works mechanically (collapse detected after epoch 1 in both datasets, then trained as slim), but ends +0.04 / +0.07 above MAGE and slightly above slim trained from scratch.
+
+**Gain decomposition, other models** (12 → 12; trained from scratch with spatial mixing off / fixed to the sensor average / learned). Test MAE:
+
+| model | data | no mixing | average | learned | share of the spatial gain captured by the average |
+|---|---|---|---|---|---|
+| Graph WaveNet | 08 / 04 | 17.037 / 22.774 | 15.982 / 21.829 | **14.775 / 19.137** | 47 % / 26 % |
+| AGCRN | 08 / 04 | 18.955 / 23.473 | **15.638 / 19.425** | 15.788 / 19.410 | 105 % / 100 % |
+| MTGNN | 08 / 04 | 15.435 / 19.142 | **15.107 / 19.001** | 15.243 / 19.177 | > 100 % (learned no better than the average; on PEMS04 not better than no mixing) |
+| STAEformer | 08 / 04 | **13.383** / 18.571 | 13.407 / 18.350 | 13.470 / **18.258** | spatial attention gives no gain on PEMS08; 71 % on PEMS04 |
+| ASTGCN* | 08 / 04 | 20.974 / 26.331 | 20.498 / 25.700 | **19.050 / 22.042** | 25 % / 15 % |
+
+*ASTGCN's attention multiplies road-graph Chebyshev filters, so "average" there means uniform attention on the road filters, not a global average; its learned gain is road-graph-based.
+
+- **For AGCRN and MTGNN (and MAGE), the plain average gives all of the spatial gain**: their learned graphs are unnecessary. STAEformer's spatial attention gives nothing on PEMS08 and is mostly replaced by the average on PEMS04.
+- **Graph WaveNet's learned graph is genuinely needed** (+1.2 / +2.7 MAE over the average), even though it is not road-aligned and its hubs are high-volume sensors. ASTGCN needs its road-based attention.
+
+## 2026-11-08 · RQ test: does a learned graph beat the average only where local dependence remains? (`MAGE_MS/others/rq_test.py`, `others/results/rq_test.json`)
+No training: saved learned and average-trained models (seed 0). Per sensor: gain = MAE(average model) − MAE(learned model), on test; "local" = leftover local dependence after regressing each sensor's anomaly on the network-average anomaly (mean |corr| with its 5 most correlated residuals, training span); "common" = share of the anomaly explained by the network average.
+
+| model | data | ρ(gain, local) | ρ(gain, common) | mean gain: top-25 % local / bottom-25 % local / all |
+|---|---|---|---|---|
+| Graph WaveNet | 08 / 04 | −0.37 / +0.04 | **+0.65 / +0.47** | −0.05 / +1.62 / +1.20 ; +2.79 / +2.37 / +2.69 |
+| AGCRN | 08 / 04 | −0.08 / +0.14 | +0.18 / −0.14 | gain ≈ 0 (−0.15 / +0.02 overall) |
+| MTGNN | 08 / 04 | −0.07 / +0.11 | +0.05 / −0.03 | gain ≈ 0 (−0.14 / −0.18) |
+| STAEformer | 08 / 04 | −0.04 / +0.12 | +0.05 / +0.07 | gain ≈ 0 (−0.06 / +0.09) |
+| ASTGCN | 08 / 04 | −0.09 / +0.08 | **+0.32 / +0.26** | +1.23 / +1.28 / +1.45 ; +3.96 / +3.36 / +3.66 |
+
+- **The local-dependence hypothesis is not supported**: where the learned graph helps, the gain is unrelated to leftover local dependence (|ρ| ≤ 0.14; Graph WaveNet on PEMS08 −0.37, the wrong sign).
+- **Where it helps (Graph WaveNet, ASTGCN), it helps most on sensors that strongly follow the network signal** (ρ = +0.26 to +0.65). Reading: the graph gives each sensor its own coupling to the common signal (a sensor-specific weighting), which models with sensor-identity embeddings already have; it is not supplying local structure. Consistent with the identity hypothesis, which the identity test still has to confirm.
+
+## 2026-11-08 · What do sensor-identity parameters encode? (`MAGE_MS/others/identity_check.py`, `others/results/identity_check.json`)
+Cross-validated ridge R² (held-out sensors) of predicting each sensor's properties (training span) from a model's per-sensor parameters. PEMS08 / PEMS04:
+
+| per-sensor parameters | volume | commute AM/PM | daily-profile shape (PC1) | loading on network signal | network-signal share |
+|---|---|---|---|---|---|
+| MAGE sensor embedding | 0.77 / 0.93 | 0.15 / 0.69 | 0.78 / 0.87 | 0.51 / 0.56 | 0.63 / 0.53 |
+| STAEformer adaptive embedding | 0.78 / 0.92 | 0.53 / 0.71 | 0.53 / 0.88 | 0.64 / 0.66 | 0.56 / 0.60 |
+| MTGNN per-sensor normalisation parameters | 0.89 / 0.93 | 0.20 / 0.57 | 0.65 / 0.78 | 0.66 / 0.61 | 0.62 / 0.59 |
+| AGCRN node embedding (dim 2 / 10) | 0.33 / 0.82 | 0.00 / 0.29 | 0.06 / 0.61 | −0.07 / 0.15 | −0.06 / 0.18 |
+| MTGNN graph embeddings | ≈ 0 | ≈ 0 | ≈ 0 / 0.22 | ≈ 0 | ≈ 0 |
+| Graph WaveNet graph vectors | 0.21 / 0.03 | ≈ 0 / 0.19 | 0.17 / 0.09 | 0.09 / ≈ 0 | 0.10 / ≈ 0 |
+| Graph WaveNet graph rows (whom each sensor listens to) | 0.13 / 0.02 | ≈ 0 | ≈ 0 | ≈ 0 | ≈ 0 |
+| random vectors (reference) | ≈ 0 | ≈ 0 | ≈ 0 | ≈ 0 | ≈ 0 |
+
+- **A sensor-identity embedding is a learned profile of the sensor's typical behaviour**: its traffic volume, its daily shape (morning vs evening commuter road) and how strongly it follows the network-wide signal (R² 0.5–0.93).
+- MAGE, STAEformer and MTGNN all carry this profile (MTGNN hides it in its per-sensor normalisation parameters, not in its graph) and none of them needs a learned graph. AGCRN carries it on PEMS04 (embedding size 10) but barely on PEMS08 (size 2).
+- **Graph WaveNet carries no such profile anywhere**: neither its graph vectors nor its graph rows encode sensor properties (R² ≈ 0). So its learned graph does not act as a hidden profile either. Working explanation: with the average, Graph WaveNet treats every sensor identically (same spatial input, shared weights); the learned graph gives each sensor a different, even if arbitrary, mixture of others, which makes sensors distinguishable (STID's "indistinguishability" argument). Tests: average + sensor embedding, and a fixed random graph.
+
+## 2026-11-08 · Identity test and random-graph test (Graph WaveNet, ASTGCN; `MAGE_MS/others/run_identity.sh`)
+Trained from scratch, seed 0. "Average + sensor embedding": mixing fixed to the sensor average plus a learned sensor embedding (Graph WaveNet: added to the hidden channels; ASTGCN: 8 extra input channels). "Random graph": Graph WaveNet's graph construction at initialisation, frozen (ASTGCN: the same matrix as fixed attention). Test MAE, PEMS08 / PEMS04:
+
+| | Graph WaveNet | ASTGCN |
+|---|---|---|
+| learned | 14.775 / 19.137 | 19.050 / 22.042 |
+| average | 15.982 / 21.829 | 20.498 / 25.700 |
+| **average + sensor embedding** | **14.665 / 18.801** | **19.035** / 23.996 |
+| fixed random graph | 15.312 / 20.106 | 21.222 / 26.510 |
+
+- Graph WaveNet: average + embedding beats the learned graph on both datasets; a random fixed graph closes 55 % / 64 % of the average-to-learned gap. The learned graph compensates for missing sensor identity and partly just makes sensors distinguishable.
+- ASTGCN: average + embedding equals learned on PEMS08 and closes 47 % of the gap on PEMS04. Its attention multiplies road-graph Chebyshev filters, so part of its PEMS04 gain is road-based; random attention is worse than uniform.
+- With the earlier runs: given sensor-identity parameters, the network average matches the learned graph in 5 of 6 models; the exception is ASTGCN on PEMS04.
+
+## 2026-11-08 · Computed sensor identity and unseen sensors (slim MAGE, 96 → 12, seed 0; `MAGE_MS/run_identity_mage.sh`, `results/idty/`)
+Identity = learned embedding (default), computed profile (52 statistics per sensor from the training span, one shared linear layer, no per-sensor parameters), or none. Unseen-sensor test: 20 % of sensors excluded from the loss, the network average and early stopping. Test MAE, PEMS08 / PEMS04:
+
+| | learned identity | no identity | computed identity |
+|---|---|---|---|
+| all sensors (trained on all) | 13.791 / 18.191 | 14.607 / 19.874 | 13.854 / 18.254 |
+| unseen 20 % (held out) | 22.588 / 32.216 | 16.954 / 21.787 | **16.609 / 20.521** |
+| seen 80 % (same models) | 13.609 / 18.083 | 14.165 / 19.712 | 13.610 / 18.198 |
+
+- The computed profile recovers 92 % / 96 % of the learned embedding's value with no per-sensor parameters.
+- On unseen sensors a learned embedding (untrained) is worse than no identity; the computed profile is best (−2 % / −6 % vs no identity) while matching the learned embedding on seen sensors.
+
+## Not done yet (original proposal and plan)
+- **Original proposal variants:** Independent (Reversed done 2026-11-02).
+- **Primary dataset:** PEMS04, which the original proposal calls primary.
 - **Baselines:** TimeMixer, STID, and MAGE with engineered temporal features.
 - **Metrics:** unmasked versions of all metrics.
 - **Step-8 extras:** the `learned`, `lazy1` and `road` arms, and the operator diagnostics.

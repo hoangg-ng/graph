@@ -9,6 +9,24 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
+def override(owner, like):
+    """Fixed spatial mixing (2026-11-07): owner.uniform (inference swap) or owner.fixed == 'mean' -> exact sensor mean
+    1/N; owner.fixed == 'self' -> identity (no spatial mixing). `like`: (..., N, N) tensor to match. None = learned."""
+    if owner.uniform or getattr(owner, 'fixed', None) == 'mean':
+        return torch.full_like(like, 1.0 / like.shape[-1])
+    if getattr(owner, 'fixed', None) == 'self':
+        return torch.eye(like.shape[-1], device=like.device, dtype=like.dtype).expand_as(like).clone()
+    if getattr(owner, 'fixed', None) == 'random':      # fixed random mixing, different per sensor, never trained
+        return owner.random_mix.to(like.dtype).expand_as(like).clone()
+    return None
+
+
+def make_random_mix(N, seed=0):
+    """Graph WaveNet's own adaptive-graph construction at initialisation, frozen: softmax(relu(E1 E2)), E ~ N(0, 1)."""
+    g = torch.Generator().manual_seed(seed)
+    return torch.softmax(torch.relu(torch.randn(N, 10, generator=g) @ torch.randn(10, N, generator=g)), dim=1)
+
+
 # ---------------------------------------------------------------- Graph WaveNet
 class GCN(nn.Module):
     """Official `gcn`: diffusion over each support up to `order` hops, concat, 1x1 conv, dropout."""
@@ -33,9 +51,12 @@ class GWNet(nn.Module):
     """Official defaults: blocks 4 x layers 2, kernel 2, residual/dilation 32, skip 256, end 512, dropout 0.3,
     node vectors of size 10 drawn from randn, adaptive adjacency softmax(relu(E1 E2)) (the --aptonly setting)."""
 
-    def __init__(self, N, in_dim=2, out_dim=12, rc=32, dc=32, sc=256, ec=512, blocks=4, layers=2, k=2, dropout=0.3):
+    def __init__(self, N, in_dim=2, out_dim=12, rc=32, dc=32, sc=256, ec=512, blocks=4, layers=2, k=2, dropout=0.3,
+                 sensor_emb=False):
         super().__init__()
-        self.blocks, self.layers, self.uniform = blocks, layers, False
+        # identity test (2026-11-08): optional STID-style learned sensor embedding added to the hidden channels
+        self.sensor_emb = nn.Parameter(nn.init.xavier_uniform_(torch.empty(rc, N))) if sensor_emb else None
+        self.blocks, self.layers, self.uniform, self.fixed = blocks, layers, False, None
         self.start_conv = nn.Conv2d(in_dim, rc, 1)
         self.nodevec1 = nn.Parameter(torch.randn(N, 10))
         self.nodevec2 = nn.Parameter(torch.randn(10, N))
@@ -55,12 +76,15 @@ class GWNet(nn.Module):
 
     def adjacency(self):
         A = F.softmax(F.relu(self.nodevec1 @ self.nodevec2), dim=1)
-        return torch.full_like(A, 1.0 / A.shape[0]) if self.uniform else A
+        o = override(self, A)
+        return A if o is None else o
 
     def forward(self, x):                      # x: (b, in_dim, N, L) -> (b, out_dim, N, 1)
         if x.size(3) < self.receptive_field:
             x = F.pad(x, (self.receptive_field - x.size(3), 0, 0, 0))
         x = self.start_conv(x)
+        if self.sensor_emb is not None:
+            x = x + self.sensor_emb[None, :, :, None]
         skip, sup = 0, [self.adjacency()]
         for i in range(self.blocks * self.layers):
             res = x
@@ -83,8 +107,9 @@ class AVWGCN(nn.Module):
     def forward(self, x, E):                   # x: (B, N, C), E: (N, D)
         n = E.shape[0]
         sup = F.softmax(F.relu(E @ E.t()), dim=1)
-        if self.owner[0].uniform:
-            sup = torch.full_like(sup, 1.0 / n)
+        o = override(self.owner[0], sup)
+        if o is not None:
+            sup = o
         sets = [torch.eye(n, device=E.device), sup]
         for _ in range(2, self.cheb_k):
             sets.append(2 * sup @ sets[-1] - sets[-2])
@@ -115,7 +140,7 @@ class AGCRN(nn.Module):
 
     def __init__(self, N, input_dim=1, hidden=64, horizon=12, num_layers=2, embed_dim=10, cheb_k=2):
         super().__init__()
-        self.uniform, self.N, self.hidden, self.horizon = False, N, hidden, horizon
+        self.uniform, self.fixed, self.N, self.hidden, self.horizon = False, None, N, hidden, horizon
         self.node_embeddings = nn.Parameter(torch.randn(N, embed_dim))
         self.cells = nn.ModuleList(AGCRNCell(input_dim if i == 0 else hidden, hidden, cheb_k, embed_dim, self)
                                    for i in range(num_layers))
@@ -126,7 +151,8 @@ class AGCRN(nn.Module):
     def adjacency(self):
         E = self.node_embeddings
         A = F.softmax(F.relu(E @ E.t()), dim=1)
-        return torch.full_like(A, 1.0 / A.shape[0]) if self.uniform else A
+        o = override(self, A)
+        return A if o is None else o
 
     def forward(self, x):                      # x: (B, T, N, 1) -> (B, horizon, N)
         B, T = x.shape[:2]
