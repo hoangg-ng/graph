@@ -265,12 +265,15 @@ def fixed_graph(kind, data, train_end, edges, k=10):
     return torch.tensor(A, dtype=torch.float32)
 
 
-def sensor_profile(data, train_end, mask=None):
+def sensor_profile(data, train_end, mask=None, days=0):
     """Computed sensor profile (2026-11-08), training span only: what the learned sensor embeddings were found to
     encode. Per sensor: hourly weekday and weekend mean profiles (24 + 24, standardised per sensor), log volume,
     log(AM peak / PM peak), and slope and R^2 on the network-average anomaly (average over `mask` sensors if given).
+    days > 0: use only the last `days` days of the training span (a new sensor with little history).
     Returns an (N, 52) tensor, columns standardised across sensors."""
     import numpy as np
+    start = max(0, train_end - days * 288) if days else 0
+    data = data[start:train_end]; train_end = len(data)
     x = data[:train_end, :, 0]
     N = x.shape[1]
     slot = np.rint(data[:train_end, 0, -2] * 288).astype(int) % 288

@@ -59,6 +59,8 @@ def main():
                         'graph experts by the slim mean term (keep all other weights) and continue')
     p.add_argument('--identity', default='learned', choices=['learned', 'profile', 'none'],
                    help='step 8 only: sensor identity = learned embedding, computed profile, or none')
+    p.add_argument('--profile_days', type=int, default=0,
+                   help='computed profile from only the last N days of the training span (0 = whole span)')
     p.add_argument('--holdout', type=float, default=0.0,
                    help='unseen-sensor test: fraction of sensors excluded from training (loss and network average)')
     p.add_argument('--log_graph', type=int, default=0, help='step 8 only: print graph entropy after every epoch')
@@ -95,7 +97,7 @@ def main():
     if a.holdout > 0:
         rng = np.random.default_rng(123)
         hold = np.zeros(N, bool); hold[rng.choice(N, int(round(a.holdout * N)), replace=False)] = True
-    prof = streams.sensor_profile(z['data'], int(idx['train'][-1]) + 1, None if hold is None else ~hold) if a.identity == 'profile' else None
+    prof = streams.sensor_profile(z['data'], int(idx['train'][-1]) + 1, None if hold is None else ~hold, days=a.profile_days) if a.identity == 'profile' else None
     if a.arm:
         model = streams.MAGEStream(margs, arm=a.arm, lam=a.lam, graph_fix=a.graph_fix, hier_rank=a.hier_rank, fixed_graph=G,
                                    identity=a.identity, profile=prof, node_num=N, input_dim=C, output_dim=1,
