@@ -1,0 +1,157 @@
+{
+  "description": "Architecture-only parameter and registered-FLOP counts; untrained weights; no latency/memory or prediction-accuracy claims",
+  "rows": [
+    {
+      "dataset": "PEMS04",
+      "arm": "grouped",
+      "input_shape": [
+        1,
+        96,
+        307,
+        3
+      ],
+      "params": 3056156,
+      "graph_params": 1892448,
+      "graph_applications": 6,
+      "counted_gflops_batch1": 1.652829056,
+      "weights_status": "untrained_structure_only",
+      "flops_count_method": "torch.utils.flop_counter.FlopCounterMode under torch.no_grad (inference_mode disables dispatch counting in the installed PyTorch)"
+    },
+    {
+      "dataset": "PEMS04",
+      "arm": "grouped_slim",
+      "input_shape": [
+        1,
+        96,
+        307,
+        3
+      ],
+      "params": 1163711,
+      "graph_params": 0,
+      "graph_applications": 0,
+      "counted_gflops_batch1": 1.166187392,
+      "weights_status": "untrained_structure_only",
+      "flops_count_method": "torch.utils.flop_counter.FlopCounterMode under torch.no_grad (inference_mode disables dispatch counting in the installed PyTorch)",
+      "fusion_order": "before_spatial",
+      "slim_coefficient_count": 3,
+      "slim_mean_applications": 3,
+      "ffn_applications": 3,
+      "shared_slim_blocks": 3,
+      "prompt_location": "after_fusion"
+    },
+    {
+      "dataset": "PEMS04",
+      "arm": "slim_then_grouped",
+      "input_shape": [
+        1,
+        96,
+        307,
+        3
+      ],
+      "params": 1163711,
+      "graph_params": 0,
+      "graph_applications": 0,
+      "counted_gflops_batch1": 2.2526432,
+      "weights_status": "untrained_structure_only",
+      "flops_count_method": "torch.utils.flop_counter.FlopCounterMode under torch.no_grad (inference_mode disables dispatch counting in the installed PyTorch)",
+      "fusion_order": "after_spatial",
+      "slim_coefficient_count": 3,
+      "slim_mean_applications": 12,
+      "ffn_applications": 12,
+      "shared_slim_blocks": 3,
+      "prompt_location": "before_spatial_per_scale"
+    },
+    {
+      "dataset": "PEMS04",
+      "arm": "grouped_uniform",
+      "input_shape": [
+        1,
+        96,
+        307,
+        3
+      ],
+      "params": 1163708,
+      "graph_params": 0,
+      "graph_applications": 0,
+      "counted_gflops_batch1": 1.166187392,
+      "weights_status": "untrained_structure_only",
+      "flops_count_method": "torch.utils.flop_counter.FlopCounterMode under torch.no_grad (inference_mode disables dispatch counting in the installed PyTorch)"
+    },
+    {
+      "dataset": "PEMS08",
+      "arm": "grouped",
+      "input_shape": [
+        1,
+        96,
+        170,
+        3
+      ],
+      "params": 2196892,
+      "graph_params": 1050720,
+      "graph_applications": 6,
+      "counted_gflops_batch1": 0.91524736,
+      "weights_status": "untrained_structure_only",
+      "flops_count_method": "torch.utils.flop_counter.FlopCounterMode under torch.no_grad (inference_mode disables dispatch counting in the installed PyTorch)"
+    },
+    {
+      "dataset": "PEMS08",
+      "arm": "grouped_slim",
+      "input_shape": [
+        1,
+        96,
+        170,
+        3
+      ],
+      "params": 1146175,
+      "graph_params": 0,
+      "graph_applications": 0,
+      "counted_gflops_batch1": 0.64577152,
+      "weights_status": "untrained_structure_only",
+      "flops_count_method": "torch.utils.flop_counter.FlopCounterMode under torch.no_grad (inference_mode disables dispatch counting in the installed PyTorch)",
+      "fusion_order": "before_spatial",
+      "slim_coefficient_count": 3,
+      "slim_mean_applications": 3,
+      "ffn_applications": 3,
+      "shared_slim_blocks": 3,
+      "prompt_location": "after_fusion"
+    },
+    {
+      "dataset": "PEMS08",
+      "arm": "slim_then_grouped",
+      "input_shape": [
+        1,
+        96,
+        170,
+        3
+      ],
+      "params": 1146175,
+      "graph_params": 0,
+      "graph_applications": 0,
+      "counted_gflops_batch1": 1.247392,
+      "weights_status": "untrained_structure_only",
+      "flops_count_method": "torch.utils.flop_counter.FlopCounterMode under torch.no_grad (inference_mode disables dispatch counting in the installed PyTorch)",
+      "fusion_order": "after_spatial",
+      "slim_coefficient_count": 3,
+      "slim_mean_applications": 12,
+      "ffn_applications": 12,
+      "shared_slim_blocks": 3,
+      "prompt_location": "before_spatial_per_scale"
+    },
+    {
+      "dataset": "PEMS08",
+      "arm": "grouped_uniform",
+      "input_shape": [
+        1,
+        96,
+        170,
+        3
+      ],
+      "params": 1146172,
+      "graph_params": 0,
+      "graph_applications": 0,
+      "counted_gflops_batch1": 0.64577152,
+      "weights_status": "untrained_structure_only",
+      "flops_count_method": "torch.utils.flop_counter.FlopCounterMode under torch.no_grad (inference_mode disables dispatch counting in the installed PyTorch)"
+    }
+  ]
+}

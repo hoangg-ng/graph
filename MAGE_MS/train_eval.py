@@ -338,6 +338,7 @@ def run(args):
             "recipe_digest": args.recipe_digest,
             "recipe_source_code_digest": args.recipe_source_code_digest,
             "protocol": "96to12_v1_validation_only",
+            **getattr(model, "architecture_metadata", {}),
             "best_val_mae": best_val, "epochs_run": len(log),
             "params": params, "graph_params": graph_params,
             "train_s_per_epoch": float(np.mean(epoch_seconds)),
@@ -367,6 +368,7 @@ def run(args):
     result = {
         "completed": True, **identity, "dataset": args.dataset,
         "arm": args.arm, "seed": args.seed, "protocol": "96to12_v1_window_local_features",
+        **getattr(model, "architecture_metadata", {}),
         "recipe_source": args.recipe_source,
         "recipe_digest": args.recipe_digest,
         "recipe_source_code_digest": args.recipe_source_code_digest,

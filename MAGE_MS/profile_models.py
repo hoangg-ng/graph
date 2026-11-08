@@ -294,6 +294,7 @@ def profile_one(
         "checkpoint_signature": checkpoint.get("signature"),
         "data_digest": checkpoint.get("data_digest"),
         "params_total": int(params_total),
+        **getattr(model, "architecture_metadata", {}),
         "params_trainable": int(params_trainable),
         "params_non_trainable": int(params_non_trainable),
         "graph_params": None if graph_params is None else int(graph_params),

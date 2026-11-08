@@ -34,11 +34,14 @@ EXTRA_SCHEDULES = {
     "grouped_no_spatial": (0,),
     "grouped_uniform": (0,),
     "proposed_no_pdm": SCHEDULES["proposed"],
+    "grouped_slim": (0,),
+    "slim_then_grouped": (0, 0, 0, 0),
 }
 ARM_SCHEDULES = {**SCHEDULES, **EXTRA_SCHEDULES}
 ARMS = tuple(ARM_SCHEDULES)
-GROUPED_ARMS = ("grouped", "grouped_no_pdm", "grouped_no_spatial", "grouped_uniform")
-NO_GRAPH_ARMS = ("uniform", "no_spatial", "grouped_no_spatial", "grouped_uniform")
+SLIM_ARMS = ("grouped_slim", "slim_then_grouped")
+GROUPED_ARMS = ("grouped", "grouped_no_pdm", "grouped_no_spatial", "grouped_uniform") + SLIM_ARMS
+NO_GRAPH_ARMS = ("uniform", "no_spatial", "grouped_no_spatial", "grouped_uniform") + SLIM_ARMS
 
 
 def _pool_time(x, factor):
@@ -279,6 +282,24 @@ class ProposalBlock(nn.Module):
         return outputs, counts
 
 
+class SlimBlock(nn.Module):
+    """Grouped normalization/FFN with a learned, bounded sensor-mean residual."""
+
+    def __init__(self, model_dim, dropout):
+        super().__init__()
+        self.norm1 = nn.LayerNorm(model_dim)
+        self.norm2 = nn.LayerNorm(model_dim)
+        self.ffn = mage_models.M.SwiGLU_FFN(model_dim, model_dim, dropout=dropout)
+        self.theta = nn.Parameter(torch.tensor(0.5))
+        self.router = None
+        self.pools = nn.ModuleList()
+
+    def forward(self, hidden):
+        normalized = self.norm1(hidden)
+        residual = hidden + self.theta.tanh() * normalized.mean(dim=1, keepdim=True)
+        return residual + self.ffn(self.norm2(residual))
+
+
 class ProposalMAGE(nn.Module):
     """MAGE proposal model; leaves the repository's original MAGE implementations untouched."""
 
@@ -339,7 +360,7 @@ class ProposalMAGE(nn.Module):
         )
         stream_count = 1 if arm in GROUPED_ARMS else len(SCALES)
         self.blocks = nn.ModuleList(
-            ProposalBlock(
+            SlimBlock(model_dim, dropout) if arm in SLIM_ARMS else ProposalBlock(
                 arm,
                 model_dim,
                 self.node_num,
@@ -365,6 +386,23 @@ class ProposalMAGE(nn.Module):
             if module is not None
             for parameter in module.parameters()
         )
+
+    @property
+    def slim_coefficient_count(self):
+        return sum(block.theta.numel() for block in self.blocks if isinstance(block, SlimBlock))
+
+    @property
+    def architecture_metadata(self):
+        if self.arm not in SLIM_ARMS:
+            return {}
+        return {
+            "fusion_order": "before_spatial" if self.arm == "grouped_slim" else "after_spatial",
+            "slim_coefficient_count": self.slim_coefficient_count,
+            "slim_mean_applications": 3 if self.arm == "grouped_slim" else 12,
+            "ffn_applications": 3 if self.arm == "grouped_slim" else 12,
+            "shared_slim_blocks": 3,
+            "prompt_location": "after_fusion" if self.arm == "grouped_slim" else "before_spatial_per_scale",
+        }
 
     @property
     def propagation_count(self):
@@ -399,18 +437,34 @@ class ProposalMAGE(nn.Module):
             )
         prompt = self.prompt(x)
         encoded = self.temporal(x)
-        if self.arm in GROUPED_ARMS:
-            fused = self.group_projection(torch.cat(encoded, dim=-1))
-            streams = [fused + prompt]
+        if self.arm in SLIM_ARMS:
+            if self.arm == "grouped_slim":
+                hidden = self.group_projection(torch.cat(encoded, dim=-1)) + prompt
+                for block in self.blocks:
+                    hidden = block(hidden)
+            else:
+                streams = []
+                for value in encoded:
+                    hidden = value + prompt
+                    for block in self.blocks:
+                        hidden = block(hidden)
+                    streams.append(hidden)
+                hidden = self.group_projection(torch.cat(streams, dim=-1))
+            prediction = self.heads[0](hidden)
+            counts = [torch.zeros(self.num_experts, dtype=torch.long, device=x.device) for _ in self.blocks]
         else:
-            streams = [value + prompt for value in encoded]
-        counts = []
-        for block, block_bias in zip(self.blocks, bias):
-            streams, block_counts = block(streams, block_bias)
-            counts.append(block_counts)
-        prediction = sum(
-            head(hidden) for head, hidden in zip(self.heads, streams)
-        )
+            if self.arm in GROUPED_ARMS:
+                fused = self.group_projection(torch.cat(encoded, dim=-1))
+                streams = [fused + prompt]
+            else:
+                streams = [value + prompt for value in encoded]
+            counts = []
+            for block, block_bias in zip(self.blocks, bias):
+                streams, block_counts = block(streams, block_bias)
+                counts.append(block_counts)
+            prediction = sum(
+                head(hidden) for head, hidden in zip(self.heads, streams)
+            )
         prediction = prediction.reshape(
             x.shape[0], self.node_num, self.horizon, self.output_dim
         ).transpose(1, 2)

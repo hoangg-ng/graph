@@ -7,6 +7,7 @@ import contextlib
 import csv
 import io
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -400,12 +401,14 @@ class HistoricalModelRegressionTests(unittest.TestCase):
         self.compare_with_reference(cases)
 
     def test_saved_seed_zero_checkpoints_match_pinned_commit(self):
+        results_dir = Path(os.environ.get("MAGE_REGRESSION_RESULTS_DIR", ROOT / "results/eval_proposal96"))
+        data_dir = Path(os.environ.get("MAGE_REGRESSION_DATA_DIR", ROOT / "data_proposal96"))
         paths = [
-            (dataset, arm, ROOT / f"results/eval_proposal96/{dataset}_{arm}_s0.pt")
+            (dataset, arm, results_dir / f"{dataset}_{arm}_s0.pt")
             for dataset in ("PEMS04", "PEMS08") for arm in profile_models.DEFAULT_ARMS
         ]
         required = [path for _, _, path in paths] + [
-            ROOT / "data_proposal96" / dataset / name
+            data_dir / dataset / name
             for dataset in ("PEMS04", "PEMS08")
             for name in ("his.npz", "idx_train.npy", "idx_val.npy", "idx_test.npy")
         ]
@@ -415,10 +418,10 @@ class HistoricalModelRegressionTests(unittest.TestCase):
         for dataset, arm, path in paths:
             checkpoint = torch.load(path, map_location="cpu", weights_only=False)
             args = SimpleNamespace(**checkpoint["args"])
-            args.data_dir = str(ROOT / "data_proposal96")
+            args.data_dir = str(data_dir)
             if dataset not in windows:
                 _, _, windows[dataset] = profile_models._load_profile_inputs(
-                    args, dataset, arm, ROOT / "data_proposal96", 2
+                    args, dataset, arm, data_dir, 2
                 )
             cases.append({
                 "name": f"{dataset}/{arm}/s0", "arm": arm, "args": vars(args),

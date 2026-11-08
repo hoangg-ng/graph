@@ -112,7 +112,7 @@ def _manifest(args, code_digest, data_digests, jobs):
     }
 
 
-def run(args):
+def run(args, jobs=None):
     args.results_dir = _resolve(args.results_dir)
     args.logs_dir = _resolve(args.logs_dir)
     args.data_dir = str(_resolve(Path(args.data_dir)))
@@ -123,7 +123,7 @@ def run(args):
     args.dropout = float(recipe["selected"]["dropout"])
     args.recipe_source_code_digest = recipe.get("code_digest")
     args.recipe_source_data_digest = recipe.get("data_digest")
-    jobs = plan_jobs(args.datasets, args.arms, args.seeds)
+    jobs = plan_jobs(args.datasets, args.arms, args.seeds) if jobs is None else jobs
     code_digest = train_eval.code_digest()
 
     if args.dry_run:
@@ -152,6 +152,7 @@ def run(args):
     args.logs_dir.mkdir(parents=True, exist_ok=True)
     manifest_path = args.results_dir / "ablation_manifest.json"
     new_manifest = _manifest(args, code_digest, data_digests, jobs)
+    new_manifest["study"] = getattr(args, "study", new_manifest["study"])
 
     if manifest_path.exists():
         with manifest_path.open(encoding="utf-8") as f:

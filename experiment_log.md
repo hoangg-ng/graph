@@ -424,3 +424,26 @@ Files: `MAGE_MS/results/ablation_val96/ablation_best_val_mae_summary.md`, `MAGE_
 - The following items are **not recorded as completed in the result directories reviewed**: a new five-seed test evaluation of Grouped-No-PDM, five-seed spatial ablation results for Grouped-No-Spatial/Grouped-Uniform, and a parameter-matched isolation of fusion order or prediction-head count. This statement describes file evidence, not a claim that no work exists outside the reviewed repository.
 
 **Principal code locations:** `MAGE_MS/proposal_model.py`, `MAGE_MS/train_eval.py`, `MAGE_MS/run_matched_eval.py`, `MAGE_MS/run_followup_eval.py`, `MAGE_MS/run_ablation_eval.py`, `MAGE_MS/report_matched_eval.py`, `MAGE_MS/report_grouped_ablation.py`, `MAGE_MS/test_proposal.py`, `MAGE_MS/test_grouped_ablation.py`.
+
+## 2026-11-08 · Unified Grouped/Slim implementation and pilot launch
+
+- New isolated branch `1108_branches_unified`, based on Jiwon-work `b5d4d81`;
+  Slim reference `study-update-2026-11-07` at `76a7d67`. Existing worktrees and
+  results were preserved.
+- Added `grouped_slim` (fusion → three Slim blocks) and `slim_then_grouped`
+  (the same three Slim blocks reused over four scales → fusion). Both keep
+  PDM, prompt, fusion dimensions and one head. Each has three theta=0.5
+  parameters, applied through tanh, and zero graph experts/graph calls.
+- Focused CPU suite: 41 tests passed, zero skipped, including actual trained
+  checkpoint regression for the original six arms and Grouped. Four legacy
+  stream functional checks passed on CPU. An expanded old runner test has a
+  pre-existing missing-function/43-versus-46-job mismatch, documented in
+  `MAGE_MS/UNIFIED_SLIM_COMPARISON.md`; its old experiment plan was not changed.
+- Architecture-only counts (untrained weights): A/B both 1,163,711 parameters
+  on PEMS04 and 1,146,175 on PEMS08. B's counted FLOPs are about 1.93× A's;
+  these are not accuracy, latency or memory results.
+- Pilot launched: 16 validation-only jobs (two datasets, four arms, seeds 0/1),
+  one worker per initially idle RTX 3090. Completion and final validation MAE
+  are pending at this implementation checkpoint. Test labels/MAE are not used.
+- The separate 40-job, five-seed test plan was dry-run only. Both new arms and
+  a newly trained Grouped baseline remain in that plan.
