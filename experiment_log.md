@@ -442,8 +442,25 @@ Files: `MAGE_MS/results/ablation_val96/ablation_best_val_mae_summary.md`, `MAGE_
 - Architecture-only counts (untrained weights): A/B both 1,163,711 parameters
   on PEMS04 and 1,146,175 on PEMS08. B's counted FLOPs are about 1.93× A's;
   these are not accuracy, latency or memory results.
-- Pilot launched: 16 validation-only jobs (two datasets, four arms, seeds 0/1),
-  one worker per initially idle RTX 3090. Completion and final validation MAE
-  are pending at this implementation checkpoint. Test labels/MAE are not used.
+- Pilot completed: **16/16 validation-only jobs**, two datasets × four arms × seeds 0/1,
+  one worker per initially idle RTX 3090. Supplemental validation RMSE/MAPE/horizon metrics
+  were evaluated from all sixteen saved best checkpoints. No test evaluation was performed.
 - The separate 40-job, five-seed test plan was dry-run only. Both new arms and
   a newly trained Grouped baseline remain in that plan.
+
+### Unified pilot results (validation only, two seeds)
+
+| Dataset | Arm | Validation MAE mean ± SD | Validation RMSE | Validation MAPE (%) | Params | Counted GFLOPs | Latency B=1 ms | Peak B=64 MiB |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| PEMS04 | grouped | 17.9553 ± 0.0088 | 29.9517 | 12.0446 | 3,056,156 | 1.652829 | 3.861 | 1050.9 |
+| PEMS04 | grouped_slim | 17.9856 ± 0.0065 | 30.0381 | 12.0372 | 1,163,711 | 1.166187 | 2.493 | 1043.7 |
+| PEMS04 | slim_then_grouped | 18.1710 ± 0.0247 | 30.3669 | 12.1252 | 1,163,711 | 2.252643 | 3.911 | 1043.7 |
+| PEMS04 | grouped_uniform | 18.0745 ± 0.0804 | 30.0279 | 12.1544 | 1,163,708 | 1.166187 | 2.490 | 1043.7 |
+| PEMS08 | grouped | 13.9073 ± 0.0257 | 24.1263 | 11.0331 | 2,196,892 | 0.915247 | 3.780 | 584.1 |
+| PEMS08 | grouped_slim | 13.9799 ± 0.0442 | 24.2874 | 11.5479 | 1,146,175 | 0.645772 | 2.455 | 580.1 |
+| PEMS08 | slim_then_grouped | 14.0675 ± 0.0275 | 24.2403 | 11.0589 | 1,146,175 | 1.247392 | 3.879 | 580.1 |
+| PEMS08 | grouped_uniform | 14.0398 ± 0.0166 | 24.0822 | 11.0468 | 1,146,172 | 0.645772 | 2.481 | 580.1 |
+
+- Costs are saved-checkpoint inference measurements from seed 0 only, using FP32/TF32 off, batches 1/64, 20 warm-ups and 100 repetitions. Counted FLOPs cover registered formulas.
+- Full paired A/B, Grouped-relative and resource comparisons: `MAGE_MS/results/unified_slim_val96_report/`. These are exploratory validation results; the formal 40 test jobs remain unexecuted.
+- Initial automated publication encountered missing HTTPS credentials and connected-app HTTP 403. The implementation branch was subsequently published from the user's terminal; `origin/1108_branches_unified` was verified at `4e1298a` before preparing the completed result commit.

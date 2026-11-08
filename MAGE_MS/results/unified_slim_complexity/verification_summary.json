@@ -1,0 +1,16 @@
+{
+  "focused_unittest_count": 41,
+  "focused_unittest_skipped": 0,
+  "legacy_stream_functional_checks": 4,
+  "code_digest": "fe4cc5c2ae6f48934d1c66eb9b83ea83b8c5dc58c8875404a32debb265c43b99",
+  "validation_jobs_completed": 16,
+  "test_metrics_evaluated": false,
+  "profiled_checkpoints": 8,
+  "precision": "FP32, TF32 disabled",
+  "latency_warmup": 20,
+  "latency_repeats": 100,
+  "legacy_runner_baseline_issue": "test_run_proposal imports absent paired_mae_results; preserved old 43-job plan",
+  "legacy_gpu_scaling_check": "passed",
+  "supplemental_validation_files": 16,
+  "supplemental_unit_tests": 2
+}

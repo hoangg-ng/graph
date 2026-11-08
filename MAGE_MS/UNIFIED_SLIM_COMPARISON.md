@@ -92,9 +92,7 @@ FLOPs for A/Uniform do not establish identical full operation counts.
 
 The focused suite completed **41 tests, zero skips**, including trained
 checkpoint regression for the six original arms and Grouped on both datasets.
-Four legacy `streams.py` functional checks also passed on CPU. Its standalone
-GPU scaling benchmark is deferred while pilot workers occupy all four GPUs;
-the benchmark calls CUDA unconditionally and cannot run with GPUs hidden.
+Four legacy `streams.py` functional checks also passed on CPU. Its standalone GPU scaling benchmark status after the pilot: `passed`. It calls CUDA unconditionally and cannot run with GPUs hidden.
 
 - Unit tests check four PDM output shapes, batch 1/2 predictions `[B,12,N,1]`,
   scalar initialization, exact node-mean/tanh/residual arithmetic, finite
@@ -133,9 +131,7 @@ completed results or compatible resume snapshots.
 
 The pilot consists of 2 datasets × 4 arms × seeds 0,1 = **16 validation-only
 jobs**. It was launched with one job per initially idle GPU. Trial selection
-and pilot reporting do not evaluate test labels or test MAE. Final pilot
-results and trained-checkpoint costs will be recorded after jobs finish;
-pending runs are not reported as completed.
+and pilot reporting do not evaluate test labels or test MAE. All 16 pilot runs completed. Results and matched trained-checkpoint costs are recorded below; no test evaluation was performed.
 
 The formal plan is 2 datasets × 4 arms × seeds 0..4 = **40 new jobs**, including
 a freshly trained Grouped baseline in the same code version. Both Slim arms
@@ -202,3 +198,22 @@ Two-seed validation results are exploratory. A five-seed test comparison,
 before claiming an accuracy or efficiency improvement. Comparing A and B alone
 does not isolate fusion position. Independent per-scale Slim parameters,
 hyperparameter retuning, and changes to normalization/data are outside scope.
+
+## Completed pilot results
+
+All 16 validation-only runs and 16 supplemental validation evaluations completed. Costs use the eight seed-0 best checkpoints on one initially idle RTX 3090, FP32/TF32 off, batch 1/64, 20 warm-ups and 100 repeats. RMSE/MAPE/horizon metrics are validation metrics, not test results.
+
+| Dataset | Arm | Validation MAE mean ± SD | Validation RMSE | Validation MAPE (%) | Params | Counted GFLOPs | Latency B=1 ms | Peak B=64 MiB |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| PEMS04 | grouped | 17.9553 ± 0.0088 | 29.9517 | 12.0446 | 3,056,156 | 1.652829 | 3.861 | 1050.9 |
+| PEMS04 | grouped_slim | 17.9856 ± 0.0065 | 30.0381 | 12.0372 | 1,163,711 | 1.166187 | 2.493 | 1043.7 |
+| PEMS04 | slim_then_grouped | 18.1710 ± 0.0247 | 30.3669 | 12.1252 | 1,163,711 | 2.252643 | 3.911 | 1043.7 |
+| PEMS04 | grouped_uniform | 18.0745 ± 0.0804 | 30.0279 | 12.1544 | 1,163,708 | 1.166187 | 2.490 | 1043.7 |
+| PEMS08 | grouped | 13.9073 ± 0.0257 | 24.1263 | 11.0331 | 2,196,892 | 0.915247 | 3.780 | 584.1 |
+| PEMS08 | grouped_slim | 13.9799 ± 0.0442 | 24.2874 | 11.5479 | 1,146,175 | 0.645772 | 2.455 | 580.1 |
+| PEMS08 | slim_then_grouped | 14.0675 ± 0.0275 | 24.2403 | 11.0589 | 1,146,175 | 1.247392 | 3.879 | 580.1 |
+| PEMS08 | grouped_uniform | 14.0398 ± 0.0166 | 24.0822 | 11.0468 | 1,146,172 | 0.645772 | 2.481 | 580.1 |
+
+These two-seed validation comparisons are exploratory. No statistical significance is claimed; both Slim arms remain in the unexecuted 40-job formal test plan. Full paired/resource comparisons and 15/30/60-minute validation errors are in `results/unified_slim_val96_report/`.
+
+Publication: the implementation is available on `origin/1108_branches_unified` at `4e1298a`. Initial automated publication encountered missing HTTPS credentials and connected-app HTTP 403; the branch was subsequently published from the user's terminal. This result commit adds the completed pilot, measurements and reports. Publish subsequent commits with `git push origin 1108_branches_unified`.

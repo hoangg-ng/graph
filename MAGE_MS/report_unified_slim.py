@@ -246,8 +246,8 @@ def build_report(results_dir, out_dir, profile_dir=None, datasets=("PEMS04", "PE
         "nonlinear processing also differ. Results cannot identify a causal effect of fusion position alone.", "",
         "Cost values come only from matching saved-checkpoint profiles, not random weights. The CSV records "
         "profile_seed_count. FLOPs count registered formulas only; latency/memory depend on the device/runtime. "
-        "Peak B=64 memory is inference allocation, not training peak. No significant improvement or cross-dataset "
-        "consistency is asserted from this descriptive pilot; both datasets must be examined.", ""]
+        "Peak B=64 memory is inference allocation, not training peak. Cross-dataset directions are descriptive "
+        "and do not establish statistical significance or a general architectural effect.", ""]
     provenance = {
         "base_commit": BASE_COMMIT, "slim_reference_commit": SLIM_COMMIT,
         "validation_only": validation_only, "seeds": list(seeds), "missing": missing,
@@ -261,7 +261,7 @@ def build_report(results_dir, out_dir, profile_dir=None, datasets=("PEMS04", "PE
     out_dir.mkdir(parents=True, exist_ok=True)
     outputs[0].write_text("\n".join(lines), encoding="utf-8")
     with outputs[1].open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=list(rows[0]) if rows else ["dataset", "arm"])
+        writer = csv.DictWriter(handle, fieldnames=list(rows[0]) if rows else ["dataset", "arm"], lineterminator="\n")
         writer.writeheader()
         writer.writerows(rows)
     outputs[2].write_text(json.dumps(provenance, indent=2, allow_nan=False) + "\n", encoding="utf-8")

@@ -1,0 +1,6 @@
+test_evaluator_calls_validation_only_and_preserves_training_result (test_unified_validation.SupplementalValidationTests) ... ok
+test_report_accepts_only_matching_validation_metric_provenance (test_unified_validation.SupplementalValidationTests) ... ok
+test_report_rejects_test_protocol_in_validation_mode (test_unified_slim.UnifiedSlimReportTests) ... ok
+test_validation_report_uses_only_validation_metrics_and_matching_costs (test_unified_slim.UnifiedSlimReportTests) ... ok
+Ran 4 tests in 0.014s
+OK

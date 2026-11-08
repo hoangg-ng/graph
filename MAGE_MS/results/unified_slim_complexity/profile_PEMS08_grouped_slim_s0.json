@@ -1,0 +1,90 @@
+{
+  "status": "completed",
+  "dataset": "PEMS08",
+  "arm": "grouped_slim",
+  "seed": 0,
+  "checkpoint": "/home/user/Workspace/KIMJIWON/graph-unified-slim/MAGE_MS/results/unified_slim_val96/PEMS08_grouped_slim_s0.pt",
+  "checkpoint_code_digest": "fe4cc5c2ae6f48934d1c66eb9b83ea83b8c5dc58c8875404a32debb265c43b99",
+  "checkpoint_signature": "74edac5a2b956bb4f33126d9df684b2a9c84ad815c1bcffb5e465f90f676fc58",
+  "data_digest": "a537342a659680fedae25b300def0cd82a94fcc3e42f482a609bb1efac685014",
+  "params_total": 1146175,
+  "fusion_order": "before_spatial",
+  "slim_coefficient_count": 3,
+  "slim_mean_applications": 3,
+  "ffn_applications": 3,
+  "shared_slim_blocks": 3,
+  "prompt_location": "after_fusion",
+  "params_trainable": 1146175,
+  "params_non_trainable": 0,
+  "graph_params": 0,
+  "parameter_memory_mib_fp32": 4.372310638427734,
+  "model_memory_mib": 4.372310638427734,
+  "positive_graph_applications": 0,
+  "negative_graph_applications": 0,
+  "total_graph_applications": 0,
+  "graph_applications_comparability": "proposal_factorized_operator_calls",
+  "applications_by_scale": {
+    "grouped": 0,
+    "negative": 0
+  },
+  "flops_counted_per_forward": 645771520,
+  "gflops_counted_per_forward": 0.64577152,
+  "flops_counted_per_sample": 645771520.0,
+  "flops_count_method": "torch.utils.flop_counter.FlopCounterMode under torch.no_grad (inference_mode disables dispatch counting in the installed PyTorch)",
+  "flops_coverage_note": "PyTorch FlopCounterMode counts only registered operator formulas; unregistered operators are not included. It counts the complete executed forward path.",
+  "flops_error": null,
+  "device": "cuda:0",
+  "gpu_model": "NVIDIA GeForce RTX 3090",
+  "torch_version": "2.5.1+cu121",
+  "cuda_version": "12.1",
+  "precision": "FP32",
+  "tf32_enabled": false,
+  "warmup": 20,
+  "repeats": 100,
+  "validation_inputs_only": true,
+  "timings": {
+    "1": {
+      "median_ms": 2.455024003982544,
+      "p95_ms": 2.5570703983306884,
+      "throughput_samples_per_s": 407.32799287412195
+    },
+    "64": {
+      "median_ms": 18.331119537353516,
+      "p95_ms": 18.415922355651855,
+      "throughput_samples_per_s": 3491.330677844663
+    }
+  },
+  "feature_preparation_timings": {},
+  "memory_by_batch": {
+    "1": {
+      "input_memory_mib": 0.186767578125,
+      "inference_peak_allocated_mib": 22.00732421875,
+      "inference_additional_peak_mib": 9.30859375
+    },
+    "64": {
+      "input_memory_mib": 11.953125,
+      "inference_peak_allocated_mib": 580.119140625,
+      "inference_additional_peak_mib": 555.654296875
+    }
+  },
+  "latency_ms_batch1_median": 2.455024003982544,
+  "latency_ms_batch1_p95": 2.5570703983306884,
+  "input_memory_mib_batch1": 0.186767578125,
+  "inference_peak_allocated_mib_batch1": 22.00732421875,
+  "inference_additional_peak_mib_batch1": 9.30859375,
+  "latency_ms_batch64_median": 18.331119537353516,
+  "latency_ms_batch64_p95": 18.415922355651855,
+  "throughput_samples_per_s_batch64": 3491.330677844663,
+  "input_memory_mib_batch64": 11.953125,
+  "inference_peak_allocated_mib_batch64": 580.119140625,
+  "inference_additional_peak_mib_batch64": 555.654296875,
+  "inference_peak_allocated_mib": 22.00732421875,
+  "profile_code_digest": "fe4cc5c2ae6f48934d1c66eb9b83ea83b8c5dc58c8875404a32debb265c43b99",
+  "checkpoint_code_digest_match": true,
+  "profile_batch_sizes": [
+    1,
+    64
+  ],
+  "profile_warmup": 20,
+  "profile_repeats": 100
+}

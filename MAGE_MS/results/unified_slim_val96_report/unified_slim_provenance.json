@@ -1,0 +1,179 @@
+{
+  "base_commit": "b5d4d818ff1e0673396ec1c74dc59cb32c2f7e55",
+  "slim_reference_commit": "76a7d6717282a68840d18451038ac632c8ad8fc4",
+  "validation_only": true,
+  "seeds": [
+    0,
+    1
+  ],
+  "missing": [],
+  "supplemental_validation_metric_count": 16,
+  "code_digests": [
+    "fe4cc5c2ae6f48934d1c66eb9b83ea83b8c5dc58c8875404a32debb265c43b99"
+  ],
+  "data_digests": {
+    "PEMS04": [
+      "0926882c1bed456e5dddd2811bb29a4f5eb5ea5ebfe02cee319f8dfd432607fb"
+    ],
+    "PEMS08": [
+      "a537342a659680fedae25b300def0cd82a94fcc3e42f482a609bb1efac685014"
+    ]
+  },
+  "comparisons": [
+    {
+      "dataset": "PEMS04",
+      "paired_seeds": 2,
+      "A_minus_B_mae_mean": -0.1853961944580078,
+      "A_minus_B_mae_sd": 0.031225082775174995,
+      "A_wins": 2,
+      "interpretation": "Descriptive paired differences; no statistical significance claim"
+    },
+    {
+      "dataset": "PEMS08",
+      "paired_seeds": 2,
+      "A_minus_B_mae_mean": -0.08758020401000977,
+      "A_minus_B_mae_sd": 0.016700267253956652,
+      "A_wins": 2,
+      "interpretation": "Descriptive paired differences; no statistical significance claim"
+    }
+  ],
+  "cross_dataset_consistency": "A has lower available paired mean MAE on both datasets (descriptive)",
+  "profile_environments": [
+    {
+      "dataset": "PEMS04",
+      "arm": "grouped",
+      "seed": 0,
+      "gpu_model": "NVIDIA GeForce RTX 3090",
+      "torch_version": "2.5.1+cu121",
+      "cuda_version": "12.1",
+      "precision": "FP32",
+      "tf32_enabled": false,
+      "warmup": 20,
+      "repeats": 100,
+      "profile_batch_sizes": [
+        1,
+        64
+      ],
+      "flops_count_method": "torch.utils.flop_counter.FlopCounterMode under torch.no_grad (inference_mode disables dispatch counting in the installed PyTorch)"
+    },
+    {
+      "dataset": "PEMS04",
+      "arm": "grouped_slim",
+      "seed": 0,
+      "gpu_model": "NVIDIA GeForce RTX 3090",
+      "torch_version": "2.5.1+cu121",
+      "cuda_version": "12.1",
+      "precision": "FP32",
+      "tf32_enabled": false,
+      "warmup": 20,
+      "repeats": 100,
+      "profile_batch_sizes": [
+        1,
+        64
+      ],
+      "flops_count_method": "torch.utils.flop_counter.FlopCounterMode under torch.no_grad (inference_mode disables dispatch counting in the installed PyTorch)"
+    },
+    {
+      "dataset": "PEMS04",
+      "arm": "grouped_uniform",
+      "seed": 0,
+      "gpu_model": "NVIDIA GeForce RTX 3090",
+      "torch_version": "2.5.1+cu121",
+      "cuda_version": "12.1",
+      "precision": "FP32",
+      "tf32_enabled": false,
+      "warmup": 20,
+      "repeats": 100,
+      "profile_batch_sizes": [
+        1,
+        64
+      ],
+      "flops_count_method": "torch.utils.flop_counter.FlopCounterMode under torch.no_grad (inference_mode disables dispatch counting in the installed PyTorch)"
+    },
+    {
+      "dataset": "PEMS04",
+      "arm": "slim_then_grouped",
+      "seed": 0,
+      "gpu_model": "NVIDIA GeForce RTX 3090",
+      "torch_version": "2.5.1+cu121",
+      "cuda_version": "12.1",
+      "precision": "FP32",
+      "tf32_enabled": false,
+      "warmup": 20,
+      "repeats": 100,
+      "profile_batch_sizes": [
+        1,
+        64
+      ],
+      "flops_count_method": "torch.utils.flop_counter.FlopCounterMode under torch.no_grad (inference_mode disables dispatch counting in the installed PyTorch)"
+    },
+    {
+      "dataset": "PEMS08",
+      "arm": "grouped",
+      "seed": 0,
+      "gpu_model": "NVIDIA GeForce RTX 3090",
+      "torch_version": "2.5.1+cu121",
+      "cuda_version": "12.1",
+      "precision": "FP32",
+      "tf32_enabled": false,
+      "warmup": 20,
+      "repeats": 100,
+      "profile_batch_sizes": [
+        1,
+        64
+      ],
+      "flops_count_method": "torch.utils.flop_counter.FlopCounterMode under torch.no_grad (inference_mode disables dispatch counting in the installed PyTorch)"
+    },
+    {
+      "dataset": "PEMS08",
+      "arm": "grouped_slim",
+      "seed": 0,
+      "gpu_model": "NVIDIA GeForce RTX 3090",
+      "torch_version": "2.5.1+cu121",
+      "cuda_version": "12.1",
+      "precision": "FP32",
+      "tf32_enabled": false,
+      "warmup": 20,
+      "repeats": 100,
+      "profile_batch_sizes": [
+        1,
+        64
+      ],
+      "flops_count_method": "torch.utils.flop_counter.FlopCounterMode under torch.no_grad (inference_mode disables dispatch counting in the installed PyTorch)"
+    },
+    {
+      "dataset": "PEMS08",
+      "arm": "grouped_uniform",
+      "seed": 0,
+      "gpu_model": "NVIDIA GeForce RTX 3090",
+      "torch_version": "2.5.1+cu121",
+      "cuda_version": "12.1",
+      "precision": "FP32",
+      "tf32_enabled": false,
+      "warmup": 20,
+      "repeats": 100,
+      "profile_batch_sizes": [
+        1,
+        64
+      ],
+      "flops_count_method": "torch.utils.flop_counter.FlopCounterMode under torch.no_grad (inference_mode disables dispatch counting in the installed PyTorch)"
+    },
+    {
+      "dataset": "PEMS08",
+      "arm": "slim_then_grouped",
+      "seed": 0,
+      "gpu_model": "NVIDIA GeForce RTX 3090",
+      "torch_version": "2.5.1+cu121",
+      "cuda_version": "12.1",
+      "precision": "FP32",
+      "tf32_enabled": false,
+      "warmup": 20,
+      "repeats": 100,
+      "profile_batch_sizes": [
+        1,
+        64
+      ],
+      "flops_count_method": "torch.utils.flop_counter.FlopCounterMode under torch.no_grad (inference_mode disables dispatch counting in the installed PyTorch)"
+    }
+  ]
+}

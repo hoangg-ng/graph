@@ -1,0 +1,38 @@
+{
+  "study": "unified_slim96",
+  "validation_only": true,
+  "recipe_source": "/home/user/Workspace/KIMJIWON/graph-unified-slim/MAGE_MS/results/tune_shared/selected_recipe.json",
+  "recipe_digest": "16b0eb133418cfc264306a6e1380d713c39ec6cf8ecbd6fc714a0ab37881e31f",
+  "recipe_source_code_digest": "9c47e939b1875807c82f8901b0d3ae2e4541893cdeaa4d922b962a23ca742cc3",
+  "recipe_source_data_digest": "0926882c1bed456e5dddd2811bb29a4f5eb5ea5ebfe02cee319f8dfd432607fb",
+  "selected_hyperparameters": {
+    "lr": 0.005,
+    "wd": 0.0001,
+    "dropout": 0.3
+  },
+  "new_code_digest": "fe4cc5c2ae6f48934d1c66eb9b83ea83b8c5dc58c8875404a32debb265c43b99",
+  "data_digests": {
+    "PEMS04": "0926882c1bed456e5dddd2811bb29a4f5eb5ea5ebfe02cee319f8dfd432607fb",
+    "PEMS08": "a537342a659680fedae25b300def0cd82a94fcc3e42f482a609bb1efac685014"
+  },
+  "workers_record_recipe_metadata": true,
+  "execution_requested": true,
+  "jobs": [
+    "PEMS04_grouped_s0",
+    "PEMS04_grouped_s1",
+    "PEMS04_grouped_slim_s0",
+    "PEMS04_grouped_slim_s1",
+    "PEMS04_slim_then_grouped_s0",
+    "PEMS04_slim_then_grouped_s1",
+    "PEMS04_grouped_uniform_s0",
+    "PEMS04_grouped_uniform_s1",
+    "PEMS08_grouped_s0",
+    "PEMS08_grouped_s1",
+    "PEMS08_grouped_slim_s0",
+    "PEMS08_grouped_slim_s1",
+    "PEMS08_slim_then_grouped_s0",
+    "PEMS08_slim_then_grouped_s1",
+    "PEMS08_grouped_uniform_s0",
+    "PEMS08_grouped_uniform_s1"
+  ]
+}

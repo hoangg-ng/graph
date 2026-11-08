@@ -1,0 +1,14 @@
+[4] arm proposed, T = 96, batch 8, forward + backward:
+Temporal Prompt Pool has:
+minute
+day
+    N =   500:    69.4 ms/step, peak    944.3 MB
+Temporal Prompt Pool has:
+minute
+day
+    N =  2000:   111.1 ms/step, peak   3353.8 MB
+Temporal Prompt Pool has:
+minute
+day
+    N =  8000:   402.4 ms/step, peak  12925.3 MB
+    log-log slope vs N: time 0.63, memory 0.94 (1 = linear, 2 = quadratic)
