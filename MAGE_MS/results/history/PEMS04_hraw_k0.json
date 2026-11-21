@@ -1,0 +1,1 @@
+{"ckpt": "results/relative/ckpt/PEMS04_hraw_k0.pt", "identity": "hraw", "dataset": "PEMS04", "unseen_mae": {"0": 28.787559509277344, "1": 29.13401222229004, "3": 23.442075729370117, "7": 21.515291213989258, "full": 20.270408630371094}}

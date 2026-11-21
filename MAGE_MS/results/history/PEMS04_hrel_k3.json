@@ -1,0 +1,1 @@
+{"ckpt": "results/relative/ckpt/PEMS04_hrel_k3.pt", "identity": "hrel", "dataset": "PEMS04", "unseen_mae": {"0": 29.319774627685547, "1": 26.38664436340332, "3": 22.188343048095703, "7": 20.791357040405273, "full": 20.161985397338867}}

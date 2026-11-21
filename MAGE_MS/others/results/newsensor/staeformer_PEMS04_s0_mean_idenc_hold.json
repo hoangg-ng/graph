@@ -1,0 +1,30 @@
+{
+ "tag": "staeformer_PEMS04_s0_mean_idenc_hold",
+ "identity": "enc",
+ "dataset": "PEMS04",
+ "trained_unseen_mae": 20.500869750976562,
+ "seen_mae": 18.189807891845703,
+ "days": {
+  "0": {
+   "computed": 22.73363494873047
+  },
+  "1": {
+   "computed": 22.19169044494629
+  },
+  "2": {
+   "computed": 21.659147262573242
+  },
+  "3": {
+   "computed": 20.969018936157227
+  },
+  "5": {
+   "computed": 20.65208625793457
+  },
+  "7": {
+   "computed": 20.572731018066406
+  },
+  "full": {
+   "computed": 20.500871658325195
+  }
+ }
+}

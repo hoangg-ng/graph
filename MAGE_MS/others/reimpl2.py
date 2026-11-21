@@ -149,10 +149,30 @@ class Attention(nn.Module):
         q, k, v = self.FC_Q(x), self.FC_K(x), self.FC_V(x)
         q, k, v = (torch.cat(torch.split(t, self.hd, dim=-1), 0) for t in (q, k, v))
         owner = self.owner[0]
-        att = torch.softmax(q @ k.transpose(-1, -2) / self.hd ** 0.5, -1)
+        scores = q @ k.transpose(-1, -2) / self.hd ** 0.5
+        mm0 = getattr(owner, 'mean_mask', None) if owner is not None else None
+        if mm0 is not None and owner.fixed is None and self.training:
+            # unseen-sensor test with LEARNED spatial attention (2026-11-16): held-out sensors are hidden as keys
+            # while training, as the mean_mask does for the network mean
+            scores = scores.masked_fill(~mm0, float('-inf'))
+        att = torch.softmax(scores, -1)
         if owner is not None:
             o = override(owner, att)
             att = att if o is None else o
+            mm = getattr(owner, 'mean_mask', None)
+            if mm is not None and owner.fixed == 'mean' and self.training:   # unseen-sensor test: average only over training sensors
+                w = mm.to(att.dtype) / mm.sum()
+                att = w.expand_as(att).clone()
+            if owner.fixed == 'mean_sim':
+                # 2026-11-16: half the heads read the network mean, the other half the mean of each sensor's 10 most
+                # correlated known sensors (owner.sim_mix, rows sum to 1; chosen from the last 7 training days)
+                N_ = att.shape[-1]
+                if mm is not None and self.training:
+                    u = (mm.to(att.dtype) / mm.sum()).expand(N_, N_)
+                else:
+                    u = torch.full((N_, N_), 1.0 / N_, device=att.device, dtype=att.dtype)
+                h2 = (att.shape[0] // B) // 2
+                att = torch.cat([u.expand_as(att[:h2 * B]), owner.sim_mix.to(att.dtype).expand_as(att[h2 * B:])], 0)
         if owner is not None and owner.record is not None:
             owner.record.append(summarise(att.detach()))
         out = torch.cat(torch.split(att @ v, B, dim=0), -1)
@@ -178,12 +198,55 @@ class STAEformer(nn.Module):
     """Official PEMS config: input/tod/dow embeddings 24 each, adaptive embedding 80 (per step and node, xavier),
     feed-forward 256, 4 heads, 3 temporal + 3 spatial layers, dropout 0.1, mixed output projection."""
 
-    def __init__(self, N, T=12, H=12, input_dim=3, ie=24, te=24, de=24, ae=80, ff=256, heads=4, layers=3, dropout=0.1):
+    def __init__(self, N, T=12, H=12, input_dim=3, ie=24, te=24, de=24, ae=80, ff=256, heads=4, layers=3, dropout=0.1,
+                 identity='learned', profile=None, id_dim=0, id_noise=0.0, id_mix=0.0, id_drop=0.0, id_mode='concat',
+                 day_feats=None, id_resample=0, day_dow=None):
         super().__init__()
         self.uniform, self.fixed, self.record, self.N, self.T, self.H = False, None, None, N, T, H
+        # sensor identity (2026-11-09, U-Trans comparison): 'learned' = the per-sensor adaptive embedding (default);
+        # 'profile' = a shared linear map of a computed sensor profile (no per-sensor parameters); 'none' = no identity
+        self.identity, self.mean_mask = identity, None
+        # identity-transfer test (2026-11-13): does computed identity fail on unseen sensors because the model memorises
+        # the training sensors through it? Controls, all off by default (= the 2026-11-09 runs):
+        #   id_dim   > 0 : bottleneck, profile -> id_dim -> ae (low-capacity identity)
+        #   id_noise > 0 : Gaussian noise (std, in standardised feature units) on the profile features while training
+        #   id_mix   > 0 : blend each sensor's features with a random TRAINING sensor's, weight ~ U(0, id_mix), training only
+        #   id_drop  > 0 : zero the identity of a random fraction of (sample, sensor) pairs while training
+        #   id_mode 'affine': identity is not fed to the attention at all; it only sets a per-sensor, per-horizon
+        #                     scale and offset on the output (zero-initialised, so it starts as the no-identity model)
+        self.id_dim, self.id_noise, self.id_mix, self.id_drop, self.id_mode = id_dim, id_noise, id_mix, id_drop, id_mode
+        #   id_resample k > 0 (2026-11-16): each training step, every sensor's identity is recomputed from k random days
+        #                     of its own history (day_feats from id_features.day_features), as a new sensor would have
+        self.id_resample = id_resample
+        # identity 'enc' (2026-11-16): TRAINED history encoder. Each day of a sensor's history -> [24 hourly
+        # log(sensor / network mean), standardised; day-of-week one-hot] -> shared MLP -> mean over the days the
+        # sensor has -> MLP with log(1 + #days) -> identity (ae). Cold-start episodes while training: every step each
+        # sensor gets a random history (p 0.05 none, p 0.15 its full history, else 1-7 consecutive days). At eval each
+        # sensor uses the days in ev_mask (default: all days; newsensor_eval sets the last k days for new sensors).
+        if identity == 'enc':
+            Fd = day_feats['day'].shape[-1] + 7
+            self.enc_day = nn.Sequential(nn.Linear(Fd, 64), nn.ReLU(), nn.Linear(64, 64))
+            self.enc_out = nn.Sequential(nn.Linear(65, 128), nn.ReLU(), nn.Linear(128, ae))
+            self.register_buffer('day_dow', F.one_hot(day_dow.long(), 7).float(), persistent=False)   # (D, 7)
+            self.register_buffer('ev_mask', torch.ones(day_feats['day'].shape[0], N, dtype=torch.bool), persistent=False)
+        if day_feats is not None:
+            for n in ('day', 'mu', 'sd'):
+                self.register_buffer('df_' + n, day_feats[n].float(), persistent=False)
+        if identity == 'profile':
+            self.register_buffer('profile', profile.float())
+            Fd = profile.shape[1]
+            if id_mode == 'affine':
+                self.id_affine = nn.Linear(Fd, 2 * H)
+                nn.init.zeros_(self.id_affine.weight); nn.init.zeros_(self.id_affine.bias)
+            elif id_dim:
+                self.prof_proj = nn.Sequential(nn.Linear(Fd, id_dim), nn.Linear(id_dim, ae))
+            else:
+                self.prof_proj = nn.Linear(Fd, ae)
         self.input_proj = nn.Linear(input_dim, ie)
         self.tod_embedding, self.dow_embedding = nn.Embedding(288, te), nn.Embedding(7, de)
         self.adaptive_embedding = nn.init.xavier_uniform_(nn.Parameter(torch.empty(T, N, ae)))
+        if identity != 'learned':
+            self.adaptive_embedding = nn.Parameter(torch.zeros(T, N, ae), requires_grad=False)
         d = ie + te + de + ae
         self.attn_t = nn.ModuleList(SelfAttentionLayer(d, ff, heads, dropout) for _ in range(layers))
         self.attn_s = nn.ModuleList(SelfAttentionLayer(d, ff, heads, dropout, owner=self) for _ in range(layers))
@@ -192,14 +255,67 @@ class STAEformer(nn.Module):
     def forward(self, x):                      # x: (B, T, N, 3) = flow (normalised), tod (fraction), dow (0..6)
         B = x.shape[0]
         feats = [self.input_proj(x), self.tod_embedding((x[..., 1] * 288).long().clamp(0, 287)),
-                 self.dow_embedding(x[..., 2].long().clamp(0, 6)), self.adaptive_embedding.expand(B, -1, -1, -1)]
+                 self.dow_embedding(x[..., 2].long().clamp(0, 6)), self.identity_emb(B)]
         h = torch.cat(feats, -1)
         for l in self.attn_t:
             h = l(h, 1)
         for l in self.attn_s:
             h = l(h, 2)
-        out = self.output_proj(h.transpose(1, 2).reshape(B, self.N, -1))
-        return out.transpose(1, 2)             # (B, H, N)
+        out = self.output_proj(h.transpose(1, 2).reshape(B, self.N, -1)).transpose(1, 2)   # (B, H, N)
+        if self.identity == 'profile' and self.id_mode == 'affine':
+            sb = self.id_affine(self._features(B))                                    # (B, N, 2H)
+            out = out * (1 + sb[..., :self.H].transpose(1, 2)) + sb[..., self.H:].transpose(1, 2)
+        return out
+
+    def _features(self, B):                    # (B, N, F) profile features, with the training-time perturbations
+        f = self.profile[None].expand(B, -1, -1)
+        if not self.training:
+            return f
+        if self.id_resample > 0:
+            D = self.df_day.shape[0]
+            pick = torch.randint(D, (self.N, self.id_resample), device=f.device)
+            f0 = self.df_day[pick, torch.arange(self.N, device=f.device)[:, None]].mean(1)     # (N, F)
+            f = ((f0 - self.df_mu) / self.df_sd)[None].expand(B, -1, -1)
+        if self.id_mix > 0:
+            trn = torch.arange(self.N, device=f.device) if self.mean_mask is None else torch.nonzero(self.mean_mask)[:, 0]
+            other = f[:, trn[torch.randint(len(trn), (self.N,), device=f.device)]]
+            lam = torch.rand(B, self.N, 1, device=f.device) * self.id_mix
+            f = (1 - lam) * f + lam * other
+        if self.id_noise > 0:
+            f = f + self.id_noise * torch.randn_like(f)
+        return f
+
+    def _episode_mask(self):                   # (D, N) days each sensor may use in this training step
+        D, N, dev = self.df_day.shape[0], self.N, self.df_day.device
+        u = torch.rand(N, device=dev)
+        k = torch.randint(1, 8, (N,), device=dev)
+        end = (torch.rand(N, device=dev) * (D - k + 1).float()).long() + k        # window [end - k, end)
+        d = torch.arange(D, device=dev)[:, None]
+        m = (d >= (end - k)[None]) & (d < end[None])
+        m = torch.where((u < 0.20)[None] & (u >= 0.05)[None], torch.ones_like(m), m)   # full history
+        return m & ~(u < 0.05)[None]                                                   # no history
+
+    def encode(self, mask):                    # mask (D, N) bool -> identity (N, ae)
+        x = (self.df_day - self.df_mu) / self.df_sd                                     # (D, N, 24)
+        x = torch.cat([x, self.day_dow[:, None].expand(-1, self.N, -1)], -1)
+        h = self.enc_day(x) * mask[..., None]                                           # (D, N, 64)
+        n = mask.sum(0).float()                                                         # (N,)
+        pooled = h.sum(0) / n.clamp(min=1)[:, None]
+        return self.enc_out(torch.cat([pooled, torch.log1p(n)[:, None]], -1))
+
+    def identity_emb(self, B=1):               # (B, T, N, ae)
+        if self.identity == 'enc':
+            ep = self.training and getattr(self, 'enc_episodes', True)
+            e = self.encode(self._episode_mask() if ep else self.ev_mask)
+            return e[None, None].expand(B, self.T, -1, -1)
+        if self.identity == 'profile':
+            if self.id_mode == 'affine':
+                return self.adaptive_embedding[None].expand(B, -1, -1, -1)            # zeros: identity not in the tokens
+            e = self.prof_proj(self._features(B))                                     # (B, N, ae)
+            if self.training and self.id_drop > 0:
+                e = e * (torch.rand(B, self.N, 1, device=e.device) >= self.id_drop)
+            return e[:, None].expand(-1, self.T, -1, -1)
+        return self.adaptive_embedding[None].expand(B, -1, -1, -1)
 
 
 # ================================================================ ASTGCN (recent component)

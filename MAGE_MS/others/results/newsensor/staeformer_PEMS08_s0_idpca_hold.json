@@ -1,0 +1,34 @@
+{
+ "tag": "staeformer_PEMS08_s0_idpca_hold",
+ "identity": "pca",
+ "dataset": "PEMS08",
+ "trained_unseen_mae": 17.731307983398438,
+ "seen_mae": 13.409640312194824,
+ "no_history": 22.3951358795166,
+ "days": {
+  "1": {
+   "computed": 29.210081100463867,
+   "sft_computed": 20.225120544433594,
+   "sft_computed_steps": 130,
+   "sft_zero": 18.88479232788086,
+   "sft_zero_steps": 120
+  },
+  "3": {
+   "computed": 18.81053352355957,
+   "sft_computed": 16.025985717773438,
+   "sft_computed_steps": 90,
+   "sft_zero": 15.711280822753906,
+   "sft_zero_steps": 130
+  },
+  "7": {
+   "computed": 18.20309066772461,
+   "sft_computed": 15.893102645874023,
+   "sft_computed_steps": 60,
+   "sft_zero": 15.752372741699219,
+   "sft_zero_steps": 170
+  },
+  "0": {
+   "computed": 17.731712341308594
+  }
+ }
+}

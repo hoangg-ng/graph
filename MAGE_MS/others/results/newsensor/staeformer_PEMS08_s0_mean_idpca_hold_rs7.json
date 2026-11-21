@@ -1,0 +1,34 @@
+{
+ "tag": "staeformer_PEMS08_s0_mean_idpca_hold_rs7",
+ "identity": "pca",
+ "dataset": "PEMS08",
+ "trained_unseen_mae": 16.00247573852539,
+ "seen_mae": 12.936798095703125,
+ "no_history": 20.122947692871094,
+ "days": {
+  "1": {
+   "computed": 17.602760314941406,
+   "sft_computed": 16.891576766967773,
+   "sft_computed_steps": 60,
+   "sft_zero": 17.06136703491211,
+   "sft_zero_steps": 170
+  },
+  "3": {
+   "computed": 16.53907585144043,
+   "sft_computed": 15.78278923034668,
+   "sft_computed_steps": 10,
+   "sft_zero": 15.515528678894043,
+   "sft_zero_steps": 120
+  },
+  "7": {
+   "computed": 16.17685317993164,
+   "sft_computed": 15.627500534057617,
+   "sft_computed_steps": 60,
+   "sft_zero": 15.2947998046875,
+   "sft_zero_steps": 210
+  },
+  "0": {
+   "computed": 16.00248908996582
+  }
+ }
+}

@@ -1,0 +1,32 @@
+{
+ "tag": "staeformer_PEMS08_s0_hold",
+ "identity": "learned",
+ "dataset": "PEMS08",
+ "trained_unseen_mae": 24.05815887451172,
+ "seen_mae": 13.322848320007324,
+ "no_history": 24.058320999145508,
+ "days": {
+  "1": {
+   "computed": 24.058320999145508,
+   "sft_computed": 21.091096878051758,
+   "sft_computed_steps": 170,
+   "sft_zero": 21.30792999267578,
+   "sft_zero_steps": 80
+  },
+  "3": {
+   "computed": 24.058320999145508,
+   "sft_computed": 17.344974517822266,
+   "sft_computed_steps": 120,
+   "sft_zero": 17.239707946777344,
+   "sft_zero_steps": 90
+  },
+  "7": {
+   "computed": 24.058320999145508,
+   "sft_computed": 16.241931915283203,
+   "sft_computed_steps": 150,
+   "sft_zero": 16.416471481323242,
+   "sft_zero_steps": 70
+  }
+ },
+ "trained_rows": 24.058320999145508
+}

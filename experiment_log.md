@@ -376,6 +376,40 @@ Identity = learned embedding (default), computed profile (52 statistics per sens
 - The computed profile recovers 92 % / 96 % of the learned embedding's value with no per-sensor parameters.
 - On unseen sensors a learned embedding (untrained) is worse than no identity; the computed profile is best (−2 % / −6 % vs no identity) while matching the learned embedding on seen sensors.
 
+## 2026-11-08 · Profile study: does the computed sensor profile hold up? (`MAGE_MS/run_profile_study.py`, `results/profile/`)
+Slim MAGE (network-mean aggregation), identity = learned embedding / computed profile / none. Test MAE; "unseen" = the 20 % of sensors excluded from training (loss, network mean, model selection). PEMS04 / PEMS08 at 96 → 12: mean of 3 seeds; other rows 1 seed.
+
+| setting | learned | **profile** | none | unseen: learned | **unseen: profile** | unseen: none |
+|---|---|---|---|---|---|---|
+| PEMS04, 96 → 12 (3 seeds) | **18.209** | 18.252 | 19.928 | 32.40 | **20.36** | 21.81 |
+| PEMS08, 96 → 12 (3 seeds) | **13.783** | 13.837 | 14.547 | 22.73 | **16.66** | 16.95 |
+| PEMS03, 96 → 12 | 14.655 | **14.381** | 15.118 | 28.05 | **13.95** | 14.81 |
+| PEMS07, 96 → 12 | 19.450 | **19.370** | 21.493 | 27.40 | **19.09** | 20.80 |
+| PEMS04, 12 → 12 | 18.350 | **18.195** | 20.554 | 42.21 | **21.08** | 22.25 |
+| PEMS08, 12 → 12 | 13.843 | **13.635** | 14.573 | 28.22 | 17.34 | **17.32** |
+
+Profile from only the last few days of the training span (unseen sensors, 96 → 12, seed 0): PEMS04 7 days 20.63, 3 days 21.86 (full span 20.52); PEMS08 7 days 16.68, 3 days 17.31 (full 16.61).
+
+- **All sensors:** the computed profile is slightly behind the learned embedding on PEMS04 / PEMS08 at 96 steps (+0.04 / +0.05, learned better in 3/3 and 2/3 seeds) but **better on PEMS03 (−0.27), PEMS07 (−0.08) and at 12 steps (−0.16 / −0.21)**. It is always far better than no identity (−0.7 to −2.4).
+- **Unseen sensors:** the learned embedding fails everywhere (27–42 MAE). The profile beats no identity in 5 of 6 settings (−0.29 to −1.70; 3/3 seeds on PEMS04 and PEMS08) and ties in one (PEMS08, 12 steps).
+- **Little history:** a 7-day profile is as good as the full span; 3 days falls to about the no-identity level, so a new sensor needs about one week of data.
+
+## 2026-11-09 · U-Trans-style comparison (STAEformer + network mean; `MAGE_MS/others/run_utrans.py`, seed 0, 12 → 12)
+Our STAEformer reimplementation with spatial attention fixed to the network mean (U-Trans-style; no congestion features), identity = learned adaptive embedding / computed profile / none, on all sensors and with the same 20 % unseen sensors as before. PEMS04 on GPU 2 (A6000), PEMS08 on GPU 0 (A4500). Test MAE, PEMS04 / PEMS08:
+
+| | learned | computed profile | none |
+|---|---|---|---|
+| all sensors | 18.299 / **13.437** | **18.269** / 13.559 | 21.648 / 15.023 |
+| unseen 20 % | 36.48 / 24.46 | 22.53 / 17.61 | **22.37 / 16.91** |
+| seen 80 % (same models) | 18.31 / **13.22** | **18.10** / 13.37 | 21.52 / 14.74 |
+| whole network in the holdout runs | 21.92 / 15.46 | **18.98 / 14.22** | 21.69 / 15.18 |
+
+Our model (slim MAGE + network mean, 12 → 12, seed 0) for reference: all sensors 18.195 / 13.635 (computed profile); unseen 21.08 / 17.34 (profile), 22.25 / 17.32 (none); ~0.65 M parameters vs 1.36 M / 1.22 M for the U-Trans-style model.
+
+- Known sensors: in the U-Trans-style backbone too, the computed profile matches the learned embedding (−0.03 / +0.12), and identity matters even more than in slim MAGE (no identity: +3.4 / +1.6).
+- Unseen sensors: the learned embedding fails (36.5 / 24.5). Here the computed profile does **not** beat no identity (+0.16 / +0.70), unlike in slim MAGE; it is the best option only for the network as a whole, because no identity is much worse on the seen sensors.
+- Ours vs U-Trans-style: about equal on all sensors, better on unseen sensors on PEMS04 (21.08 vs 22.53), about equal on PEMS08, with about half the parameters.
+
 ## Not done yet (original proposal and plan)
 - **Original proposal variants:** Independent (Reversed done 2026-11-02).
 - **Primary dataset:** PEMS04, which the original proposal calls primary.
@@ -388,3 +422,415 @@ Identity = learned embedding (default), computed profile (52 statistics per sens
   - LargeST-SD data and a FaST reproduction;
   - long-horizon runs;
   - a full literature check.
+
+## 2026-11-09 · Published inductive identities vs ours on unseen sensors (PCA embedding, SCPT-style encoder)
+
+Literature check first: SCPT (arXiv 2305.05237) already forecasts unseen roads from an embedding computed from each road's
+own history; the PCA embedding (arXiv 2411.11448) is essentially our profile; EvoXXLTraffic (2605.29768) already reports
+that per-node parameters fail on new sensors. None of the three trains a no-identity baseline or explains the failure
+(unseen sensors' embeddings decay to 0 under weight decay). Code: `MAGE_MS/id_features.py` (both baselines, fitted on
+training sensors only, same slot as the profile), `--identity pca|scpt` in `train.py` / `others/train_other2.py`,
+launcher `MAGE_MS/run_inductive.py` (lerna GPUs 0 and 3). Seed 0, 20 % unseen sensors (rng 123).
+
+Unseen-sensor MAE (seen-sensor MAE in brackets):
+
+| backbone / data | learned | none | our profile | PCA emb. | SCPT-style |
+|---|---|---|---|---|---|
+| U-Trans-style PEMS04 | 36.48 (18.31) | 22.37 (21.52) | 22.53 (18.10) | **21.53** (18.13) | 23.08 (18.11) |
+| U-Trans-style PEMS08 | 24.45 (13.22) | **16.91** (14.74) | 17.61 (13.37) | 17.87 (13.36) | 18.49 (13.26) |
+| slim MAGE PEMS04 | 32.22 (18.08) | 21.79 (19.71) | 20.52 (18.20) | **20.09** (18.24) | 21.21 (18.40) |
+| slim MAGE PEMS08 | 22.59 (13.61) | 16.95 (14.16) | 16.61 (13.61) | **16.29** (13.67) | 17.10 (13.67) |
+
+All sensors, slim MAGE test MAE: learned 18.19 / 13.79, none 19.87 / 14.61, profile 18.25 / 13.85, PCA 18.48 / 13.98, SCPT 18.67 / 13.99.
+
+Conclusions (1 seed; seed spread on unseen MAE was ~0.2):
+- Our profile has no edge over the published PCA embedding (PCA better on unseen in 3 of 4, profile slightly better on known sensors). The computed-identity method is not novel.
+- The no-identity baseline is competitive with the published inductive identities on unseen sensors: it beats SCPT in 3 of 4 settings and beats every computed identity in U-Trans PEMS08.
+- Identity transfers poorly to new sensors: on known sensors computed identity gains 1.5 to 3.4 MAE over none; on unseen sensors the best gains 0 to 1.7. This "identity transfer gap" is unaddressed by the papers checked and is the open problem.
+
+## 2026-11-15 · Why computed identity fails on unseen sensors in the U-Trans-style backbone
+
+Hypothesis: the 80-dim identity concatenated to every token lets STAEformer memorise the training sensors. Test: PCA
+identity, 20 % unseen sensors, seed 0, one change per run (`others/run_idtransfer.py`, controls in
+`reimpl2.STAEformer`, flags `--pca_k --id_dim --id_noise --id_mix --id_drop --id_mode` in `train_other2.py`;
+achilleas GPUs 6 and 7). Gain = MAE of the no-identity model minus MAE of the variant (positive = identity helps).
+
+| variant | PEMS08 unseen / seen MAE | PEMS08 gain unseen / seen | PEMS04 unseen / seen MAE | PEMS04 gain unseen / seen |
+|---|---|---|---|---|
+| no identity | 16.91 / 14.74 | 0 / 0 | 22.37 / 21.52 | 0 / 0 |
+| learned | 24.45 / 13.22 | -7.54 / +1.53 | 36.48 / 18.31 | -14.11 / +3.21 |
+| PCA k 8 (baseline) | 17.87 / 13.36 | -0.96 / +1.38 | 21.53 / 18.13 | +0.84 / +3.39 |
+| k 2 | 16.71 / 13.53 | +0.20 / +1.22 | 21.82 / 19.28 | +0.55 / +2.24 |
+| k 4 | 18.12 / 13.30 | -1.21 / +1.45 | 22.88 / 18.42 | -0.51 / +3.10 |
+| 8-wide bottleneck | 17.90 / 13.35 | -0.99 / +1.39 | 21.59 / 18.13 | +0.78 / +3.38 |
+| **noise 0.5** | **16.40 / 13.07** | **+0.52 / +1.68** | **20.67** / 18.65 | **+1.70** / +2.87 |
+| mix 0.5 | 16.64 / 13.00 | +0.27 / +1.74 | 21.03 / 18.46 | +1.34 / +3.06 |
+| drop 0.3 | 18.25 / 13.14 | -1.34 / +1.60 | 21.07 / 18.15 | +1.30 / +3.37 |
+| affine (output scale/shift only) | 16.55 / 14.51 | +0.37 / +0.24 | 21.78 / 21.03 | +0.59 / +0.49 |
+
+Reading (1 seed):
+- Restricting capacity (k 4, 8-wide bottleneck) does nothing; k 2 trades known-sensor accuracy for a little transfer.
+  The affine pathway transfers but loses almost all of the known-sensor gain. So it is not a capacity problem.
+- Perturbing the identity during training fixes it: noise 0.5 turns the unseen gain positive on PEMS08 (-0.96 -> +0.52,
+  with known sensors also better) and doubles it on PEMS04 (+0.84 -> +1.70, known sensors -0.5). Mixing helps on both
+  (+0.27 / +1.34 unseen) but less than noise; dropout helps on PEMS04 but not PEMS08.
+- Noise-regularised PCA identity beats no identity and plain PCA on unseen sensors on both datasets. Consistent with
+  memorisation of exact identity values, not with too much identity capacity.
+
+## 2026-11-16 · New sensors with a short history: computed vs fitted identity, cold-start training
+
+Setting: U-Trans-style STAEformer, seed 0, 20 % unseen sensors (rng 123). A new sensor has only the LAST k training days
+(k = 1, 3, 7) plus its live input window. `others/newsensor_eval.py` rebuilds only the unseen sensors' identity from those
+k days (computed) or fits it on forecasting error over those days with the model frozen (fitted; best of starting from
+the computed value or from 0). Code: `id_features.day_features` (`rel` = log(sensor / network mean) per hour, network
+mean over known sensors on the same days), `--identity rel`, `--id_resample k` (identity recomputed from k random days
+every training step), learned-attention holdout masking in `reimpl2.Attention`; launchers `others/run_newsensor.py`
+(NEWSENSOR_STAGE 1/2/3), lerna GPUs 0-3. CPU check first: the relative profile identifies a sensor among all sensors
+from 1 day 66 % vs 39 % (raw, PEMS04), 54 % vs 34 % (PEMS08).
+
+Unseen-sensor MAE, computed identity (fitted in brackets); no identity = 16.91 (PEMS08) / 22.37 (PEMS04):
+
+| model | PEMS08 1 d | 3 d | 7 d | seen | PEMS04 1 d | 3 d | 7 d | seen |
+|---|---|---|---|---|---|---|---|---|
+| mean + learned emb. | 23.14 (20.32) | (16.44) | (16.11) | 13.18 | 34.67 (41.28) | (23.09) | (22.24) | 18.21 |
+| attention + learned emb. | 24.06 (21.09) | (17.24) | (16.24) | 13.32 | 36.02 (37.14) | (23.24) | (22.14) | 18.62 |
+| mean + PCA | 25.99 (18.98) | 18.89 (15.87) | 17.62 (15.68) | 13.36 | 45.35 (30.90) | 26.35 (21.04) | 23.16 (20.49) | 18.13 |
+| attention + PCA | 29.21 (18.88) | 18.81 (15.71) | 18.20 (15.75) | 13.41 | 36.96 (29.92) | 25.66 (21.42) | 22.64 (20.95) | 18.12 |
+| mean + PCA + noise 0.5 | 17.56 (16.89) | 16.50 (15.50) | 16.43 (15.36) | 13.07 | 23.88 (23.28) | 21.98 (20.44) | 20.92 (20.19) | 18.65 |
+| mean + relative | 20.04 (20.20) | 16.81 (16.81) | 16.92 (15.92) | 13.21 | 31.39 (31.39) | 24.20 (22.08) | 23.50 (20.99) | 18.12 |
+| **mean + relative, trained on 3-day windows** | 16.84 (17.23) | **15.70** (15.70) | 15.61 (15.20) | **13.04** | 23.13 (23.13) | **21.00** (20.93) | 20.57 (20.46) | 18.34 |
+| mean + relative, 7-day windows | 17.69 | 15.86 (15.63) | 15.72 (15.22) | 12.97 | 24.79 | 21.31 | 20.56 | 18.18 |
+| mean + PCA, 7-day windows | 17.60 (16.89) | 16.54 (15.52) | 16.18 (15.29) | 12.94 | 26.19 (25.96) | 21.75 (20.51) | 21.04 (20.42) | 18.23 |
+| mean + relative + noise 0.5 | **16.13** | 15.97 (15.68) | 15.97 (15.56) | 13.62 | **22.82** | 21.26 (20.50) | 20.85 (20.45) | 19.21 |
+
+Reading (1 seed):
+- Fitting a standard learned embedding on the new sensor's days barely beats no identity (3 d: 16.44 / 23.09). Not "just retraining".
+- Training under simulated short history (identity from random 3-day windows) gives the best computed identity: with 3 days
+  it beats no identity by 1.2 / 1.4 MAE and beats PCA from the full history, with no test-time fitting and no loss on known
+  sensors. Test-time fitting adds little on top of it.
+- Relative (network-normalised) beats PCA under the same window training by 0.3-0.7.
+- Learned attention vs network mean with the same identity: about equal on new sensors (PCA 3 d 18.81 vs 18.89, 25.66 vs
+  26.35); the network mean is not what makes cold start work, but it is as good and 1.7x faster per epoch on PEMS04.
+- Similar-sensor mixing (stage 3; half the heads read the mean of each sensor's 10 most correlated training sensors over
+  the last 7 training days, chosen the same way for new sensors). Unseen / seen MAE, network mean -> mean + similar-10:
+  PEMS08 no identity 16.91 -> 17.51 / 14.74 -> 13.89; PEMS08 PCA + noise 16.40 -> 16.87 / 13.07 -> 12.97;
+  PEMS04 no identity 22.37 -> 21.76 / 21.52 -> 19.35; PEMS04 PCA + noise 20.67 -> 21.49 / 18.65 -> 18.17;
+  learned identity, all sensors 13.44 -> 13.43 (PEMS08), 18.30 -> 18.40 (PEMS04).
+  Worse on new sensors in 3 of 4; it helps known sensors mainly when the model has no identity (it acts as one), and adds
+  nothing in the normal setting. The linear check overstated it (it ignores the sensor's own live input). Dropped.
+
+## 2026-11-16 · Trained history encoder with cold-start episodes
+
+Identity `enc` (`reimpl2.STAEformer`): each day of a sensor's history = 24 hourly log(sensor / network mean) values +
+day-of-week one-hot -> shared MLP -> mean over the days the sensor has -> MLP (with log(1 + #days)) -> identity (80).
+Trained end to end with the forecaster (network-mean backbone). Cold-start episodes: every step each sensor gets a random
+history (5 % none, 15 % full, 80 % 1-7 consecutive days). A new sensor at test time: encoder on its last k days, nothing
+fitted. Ablation `--enc_episodes 0`: always the full history while training. Launcher stage 4, lerna GPUs 0-3, seed 0.
+
+Unseen-sensor MAE by days of history (seen-sensor MAE last):
+
+| model | 0 d | 1 d | 2 d | 3 d | 5 d | 7 d | full | seen |
+|---|---|---|---|---|---|---|---|---|
+| PEMS08 no identity | 16.91 | | | | | | | 14.74 |
+| PEMS08 fixed relative, 3-day windows | 20.34 | 16.84 | | 15.70 | | 15.61 | 15.52 | 13.04 |
+| **PEMS08 encoder + episodes** | 17.77 | **16.26** | 15.91 | 15.79 | 15.73 | 15.67 | 15.67 | **12.95** |
+| PEMS08 encoder, no episodes | 23.57 | 20.45 | 18.98 | 18.76 | 18.58 | 17.67 | 16.92 | 13.26 |
+| PEMS04 no identity | 22.37 | | | | | | | 21.52 |
+| PEMS04 fixed relative, 3-day windows | 27.01 | 23.13 | | 21.00 | | 20.57 | 20.35 | 18.34 |
+| **PEMS04 encoder + episodes** | 22.73 | **22.19** | 21.66 | 20.97 | 20.65 | 20.57 | 20.50 | **18.19** |
+| PEMS04 encoder, no episodes | 33.87 | 31.14 | 29.09 | 25.97 | 24.11 | 23.22 | 21.27 | 18.14 |
+
+Normal setting (all sensors known): encoder 13.24 (PEMS08) / 18.34 (PEMS04) vs U-Trans-style learned identity 13.44 / 18.30.
+
+Reading (1 seed):
+- Cold-start episodes are what make it work: the same encoder trained only on full histories fails on new sensors
+  (3 d: 18.76 / 25.97 vs 15.79 / 20.97).
+- The trained encoder ties the fixed relative profile with 3+ days, is better with 0-1 day, degrades gracefully to about
+  no-identity level with no history, and is the best on known sensors; no cost in the normal setting.
+
+## 2026-11-18 · Does the network mean make a new sensor's identity reliable from a few days? (CPU check, no training)
+
+Identity of each unseen sensor (20 %, rng 123) from k random training days vs its full-span identity. raw = log hourly
+flow profile (24 values); relative = log(sensor / network mean of the known sensors, same days and hours). 30 draws.
+"id" = share of unseen sensors whose k-day identity is closest to their own full-span identity among all sensors.
+
+| data | days drawn from | k | raw R² / id | relative R² / id |
+|---|---|---|---|---|
+| PEMS04 | any | 1 | 0.769 / 39 % | 0.857 / 66 % |
+| PEMS04 | any | 3 | 0.919 / 61 % | 0.949 / 81 % |
+| PEMS04 | any | 7 | 0.974 / 84 % | 0.984 / 91 % |
+| PEMS04 | weekdays | 1 / 3 / 7 | 77 / 83 / 91 % | 80 / 88 / 92 % |
+| PEMS08 | any | 1 | 0.900 / 34 % | 0.956 / 54 % |
+| PEMS08 | any | 3 | 0.964 / 55 % | 0.985 / 71 % |
+| PEMS08 | any | 7 | 0.988 / 74 % | 0.995 / 83 % |
+| PEMS08 | weekdays | 1 / 3 / 7 | 65 / 76 / 84 % | 70 / 80 / 86 % |
+
+Reading: dividing by the network mean makes short-history identity clearly more reliable, most with 1 to 3 days of
+mixed day types (identification 39 -> 66 % and 34 -> 54 % at 1 day). When the days are all weekdays the gain is small,
+so most of the benefit is cancelling day-type effects (weekend / holiday / unusual days). The PEMS08 sensor 2 example
+(3 days incl. a Saturday, identity far from its full-span value) was an unlucky case, not the rule. This measures
+identity stability only, not forecast accuracy; that needs training runs.
+
+## 2026-11-18 · Does a network-relative identity give better forecasts on unseen sensors? (slim MAGE)
+
+`MAGE_MS/run_relative.py` (achilleas GPUs 6, 7; 2 batch processes per GPU via `batch_run.py`). Seed 0, 20 % unseen.
+Identity = 24 hourly values, raw (log flow) or relative (log sensor / network mean of known sensors), `--identity hraw|hrel`
+in `train.py`. Known sensors: whole training span; unseen sensors: only their last k days (`--unseen_days`).
+Last days are weekend-heavy (PEMS04 k=1 Sunday, k=3 Fri-Sun; PEMS08 k=1 Saturday, k=3 Thu-Sat).
+
+Unseen-sensor test MAE (known-sensor MAE in brackets):
+
+| data | k days | raw | relative | relative - raw |
+|---|---|---|---|---|
+| PEMS04 (no identity 21.79 / 19.71) | 1 | 31.03 (19.25) | **26.47** (18.30) | -4.56 |
+| | 3 | 23.76 (18.60) | **22.19** (18.22) | -1.57 |
+| | 7 | 21.48 (18.25) | **21.03** (18.27) | -0.45 |
+| | full | 20.27 (18.27) | 20.18 (18.30) | -0.09 |
+| PEMS08 (no identity 16.95 / 14.16) | 1 | 20.85 (13.74) | **18.02** (13.62) | -2.83 |
+| | 3 | 16.49 (13.65) | **16.19** (13.70) | -0.30 |
+| | 7 | 16.19 (13.67) | 16.08 (13.69) | -0.11 |
+| | full | 16.13 (13.69) | 16.21 (13.68) | +0.08 |
+
+Reading (1 seed): the network-relative identity gives better unseen-sensor forecasts than the raw one whenever history is
+short, by a lot at 1 day (-4.6 / -2.8) and still at 3 days; equal with the full span. So the network mean improves
+new-sensor identity AND forecasts. But with 1 day (both data) and 3 days (PEMS04) even the relative identity is worse
+than no identity: very short histories still need a fallback (shrink toward the average sensor / no identity).
+Caveat: known-sensor MAE should be the same for a given identity kind across k (unseen rows never enter the loss) but
+varies 18.2-19.3 on PEMS04 (raw k=1 stopped early at 137 epochs); either run noise (threads share the RNG) or the unseen
+sensors' identities reach known sensors through a cross-sensor path. To check before relying on small differences.
+
+## 2026-11-18 · Cold start: train with identities from random short windows
+
+Check first (CPU): from 1 day, the network-relative identity of an unseen sensor already matches its whole-span identity
+with R² 0.79 (PEMS04) / 0.96 (PEMS08); occupancy + speed raise PEMS04 to 0.89; road neighbours' identities predict
+nothing (R² 0.04 / -0.24). So the 1-day failure is the model's sensitivity to identity error, not missing information.
+Fix: `--id_window 1` resamples every sensor's identity from a random 1-7 day window each batch (whole span with prob 0.3);
+`--id_os 1` adds occupancy and speed (`id_features.WindowIdentity`, launcher `MAGE_MS/run_coldstart.py`, GPUs 6/7).
+Slim MAGE, seed 0, 20 % unseen sensors; unseen identity from the last k days (weekend-heavy for k <= 3).
+
+Unseen-sensor MAE (known-sensor MAE in brackets). "fixed" = same identity, trained with whole-span identities only.
+
+| data | k | no identity | fixed | window training | + occupancy, speed |
+|---|---|---|---|---|---|
+| PEMS04 | 1 | **21.79** (19.71) | 26.47 (18.30) | 22.53 (18.39) | 22.34 (18.28) |
+| PEMS04 | 3 | 21.79 | 22.19 (18.22) | 20.86 (18.51) | **20.80** (18.32) |
+| PEMS04 | 7 | 21.79 | 21.03 (18.27) | **20.25** (18.44) | 20.28 (18.34) |
+| PEMS08 | 1 | 16.95 (14.16) | 18.02 (13.62) | 16.70 (13.77) | **16.62** (13.57) |
+| PEMS08 | 3 | 16.95 | 16.19 (13.70) | **15.96** (13.69) | 16.02 (13.63) |
+| PEMS08 | 7 | 16.95 | 16.08 (13.69) | 16.05 (13.68) | 16.05 (13.57) |
+
+Reference, whole-span identity for unseen sensors (fixed training): 20.18 / 16.21.
+
+Reading (1 seed): window training is the big lever. 1 day: -3.9 (PEMS04) and -1.3 (PEMS08) vs fixed training; 3 days:
+-1.3 / -0.2. It now beats no identity in 5 of 6 settings, the exception being PEMS04 with a single Sunday (22.34 vs
+21.79). With 3 to 7 days it matches or beats the whole-span identity of the earlier runs (PEMS08 3 days 15.96 vs 16.21).
+Occupancy and speed add little (<= 0.2) but remove the small known-sensor cost of window training (PEMS04 18.3 vs 18.4-18.5).
+
+## 2026-11-18 — Cold start: PCA comparison (run_pca_coldstart.py)
+Slim MAGE, seed 0, 20 % unseen sensors, unseen identity from their last k days. Unseen MAE (known-sensor MAE ~18.2-18.8 / 13.6-14.0 for all).
+
+| PEMS04 | k=1 | k=3 | k=7 |
+|---|---|---|---|
+| no identity | 21.79 | 21.79 | 21.79 |
+| PCA, fixed training (as published) | 33.71 | 23.03 | 21.04 |
+| relative, fixed training | 26.47 | 22.19 | 21.03 |
+| PCA + window training | 22.49 | 20.85 | 20.27 |
+| PCA-of-relative + window training | 22.57 | 20.97 | 20.58 |
+| relative + window training (win) | 22.53 | 20.86 | 20.25 |
+| relative + occ/speed + window (win_os) | 22.34 | 20.80 | 20.28 |
+
+| PEMS08 | k=1 | k=3 | k=7 |
+|---|---|---|---|
+| no identity | 16.95 | 16.95 | 16.95 |
+| PCA, fixed training (as published) | 21.67 | 16.67 | 16.57 |
+| relative, fixed training | 18.02 | 16.19 | 16.08 |
+| PCA + window training | 16.81 | 16.16 | 16.11 |
+| PCA-of-relative + window training | 16.76 | 16.08 | 15.97 |
+| relative + window training (win) | 16.70 | 15.96 | 16.05 |
+| relative + occ/speed + window (win_os) | 16.62 | 16.02 | 16.05 |
+
+Findings: (1) published PCA collapses with short histories (k=1: +11.9 / +4.7 MAE worse than no identity).
+(2) Window training is what fixes it, for any identity: PCA + window ≈ our relative + window (differences ≤0.2, inside seed noise).
+(3) Network-mean normalisation helps under fixed training (26.47 vs 33.71, 18.02 vs 21.67) but adds little once window training is used.
+(4) PEMS04 k=1 (one Sunday) is still worse than no identity for every variant. Single seed.
+
+## 2026-11-18 — Fair unseen-sensor comparison by history length (eval_history.py)
+Each saved checkpoint re-tested on the same unseen sensors with 0 days (identity = mean of known sensors), last 1/3/7 days, or full span (train.py --eval_ckpt). Mean over identically trained checkpoints (n = 3-4; spread <= 0.15 for window models). Learned / none / SCPT: stored results (no checkpoints; learned and none ignore the history).
+
+| PEMS04 | 0 | 1 | 3 | 7 | full |
+|---|---|---|---|---|---|
+| learned embedding | 32.40 | 32.40 | 32.40 | 32.40 | 32.40 |
+| no identity | **21.81** | **21.81** | 21.81 | 21.81 | 21.81 |
+| SCPT | - | - | - | - | 21.21 |
+| PCA (published) | 29.72 | 31.25 | 23.20 | 20.81 | 20.09 |
+| raw profile | 28.89 | 30.13 | 23.53 | 21.39 | 20.28 |
+| relative profile | 28.86 | 26.65 | 22.29 | 20.93 | 20.21 |
+| PCA + window | 25.24 | 22.53 | 20.91 | **20.22** | 20.12 |
+| PCA of relative + window | 24.64 | 22.52 | 21.02 | 20.60 | 20.51 |
+| relative + window (ours) | 24.61 | 22.52 | **20.82** | 20.26 | **20.05** |
+| relative + occ/speed + window (ours) | 25.76 | 22.40 | **20.82** | 20.30 | 20.12 |
+
+| PEMS08 | 0 | 1 | 3 | 7 | full |
+|---|---|---|---|---|---|
+| learned embedding | 22.73 | 22.73 | 22.73 | 22.73 | 22.73 |
+| no identity | **16.95** | 16.95 | 16.95 | 16.95 | 16.95 |
+| SCPT | - | - | - | - | 17.10 |
+| PCA (published) | 21.20 | 21.46 | 16.90 | 16.58 | 16.55 |
+| raw profile | 20.62 | 21.29 | 16.48 | 16.15 | 16.10 |
+| relative profile | 20.51 | 18.12 | 16.19 | 16.18 | 16.11 |
+| PCA + window | 18.69 | 16.87 | 16.15 | 16.07 | 16.05 |
+| PCA of relative + window | 18.56 | 16.72 | 16.06 | 16.01 | 16.03 |
+| relative + window (ours) | 18.59 | 16.70 | **16.03** | **15.98** | 15.99 |
+| relative + occ/speed + window (ours) | 19.48 | **16.62** | 16.07 | 16.01 | **15.97** |
+
+0 days: every identity model is worse than no identity (the mean identity is not a neutral input). 1 day: no identity still wins on PEMS04. 3+ days: window-trained models win; ours ~ PCA + window (within ~0.1).
+
+## 2026-11-18 · Archived README (replaced by the unseen-sensor README; kept verbatim)
+
+The text below was README.md until 2026-11-18. The graph-collapse and identity findings are summarised in the new README; the multi-scale proposal, other directions and per-model tables live here and in the entries above.
+
+### Adaptive graphs learn the mean: sensor identity, not graph structure, drives spatial gains in traffic forecasting
+
+Most recent traffic forecasters learn an adaptive graph between sensors. We ask **when such a learned graph actually beats a simple network-wide average of all sensors**. Across six published models on PEMS04 and PEMS08, the answer is: only when the model has no other way to tell sensors apart. With a sensor-identity representation, the plain average matches the learned graph in five of six models, and in MAGE (NeurIPS 2025) the learned graph collapses to that average on its own. We show that sensor identity is a compact profile of each sensor's typical behaviour, which can be computed directly from its data. This leads to a **learning-free spatial module**: a fixed network-wide average plus a computed sensor profile, with no learned graph and no per-sensor parameters. It matches MAGE with about 70 % fewer parameters, matches or beats learned sensor embeddings across four datasets and two input lengths, and forecasts best for sensors never seen in training once they have about a week of history.
+
+Setting: PEMS04 (307 sensors, 59 days) and PEMS08 (170 sensors, 62 days), traffic flow every 5 minutes, chronological 6:2:2 split, test MAE (lower is better), one seed per configuration (differences under about 0.05–0.08 MAE are noise). Per-run tables: [`experiment_log.md`](experiment_log.md); full history: [`research_design.md`](research_design.md).
+
+---
+
+#### 1. Sensor identity: what it is and why a model needs it
+
+**The data.** Each dataset is one array, *time steps × sensors × measurements* (flow, occupancy, speed), plus a list of road connections. A sensor is only a column index: the data carry no location, road type or direction.
+
+**The problem: indistinguishable sensors.** Two sensors can show almost the same recent history and still have different futures. PEMS08, Tuesday 12 July 2016, 07:00 (flow every 15 minutes):
+
+| | last hour | next hour (actual) |
+|---|---|---|
+| sensor 31 | 206, 235, 260, 285 | 263, 286, 289, **337** (keeps rising) |
+| sensor 148 | 216, 235, 260, 276 | 270, 306, 291, **251** (peaks, then falls) |
+
+A model that sees only recent values and the time of day receives the same input for both and must give both the same forecast.
+
+**Sensor identity** is any information that tells the model which sensor it is looking at and how that sensor usually behaves. Models obtain it in three ways:
+
+| Source of identity | Example models | For a new sensor? |
+|---|---|---|
+| a learned embedding per sensor | MAGE, STAEformer, STID | no (untrained) |
+| other per-sensor parameters, or a learned graph that mixes different sensors for each sensor | MTGNN (normalisation layers), Graph WaveNet (its graph) | no |
+| **computed from the sensor's own data (ours)** | – | **yes** |
+
+**What identity encodes.** Predicting sensor properties from the learned per-sensor parameters (cross-validated R², PEMS08 / PEMS04):
+
+| learned per-sensor parameters | traffic volume | daily shape | commute direction (AM vs PM peak) | follows the network signal |
+|---|---|---|---|---|
+| MAGE sensor embedding | 0.77 / 0.93 | 0.78 / 0.87 | 0.15 / 0.69 | 0.51 / 0.56 |
+| STAEformer adaptive embedding | 0.78 / 0.92 | 0.53 / 0.88 | 0.53 / 0.71 | 0.64 / 0.66 |
+| MTGNN normalisation parameters | 0.89 / 0.93 | 0.65 / 0.78 | 0.20 / 0.57 | 0.66 / 0.61 |
+| Graph WaveNet graph vectors | 0.21 / 0.03 | 0.17 / 0.09 | ≈ 0 / 0.19 | ≈ 0 |
+
+Identity is a **profile of the sensor's typical behaviour**: how busy it is, its daily shape, whether it is a morning or evening commuter road, and how strongly it moves with the whole network. In the example above, the profile separates the two sensors: sensor 148 normally peaks early in the morning (its peak is ending at 07:00), while sensor 31 is an evening-heavy road still ramping up.
+
+**What identity contributes.** Removing it from a model with a fixed spatial average costs +0.82 / +1.68 MAE (PEMS08 / PEMS04), more than any spatial design choice we tested.
+
+#### 2. Finding: a learned graph is needed only when identity is missing
+
+Each model was trained from scratch with spatial mixing **off**, fixed to the **network-wide average** (every sensor receives the mean of all sensors), or **learned** (12 → 12 steps; MAGE via a slim variant, 96 → 12):
+
+| Model | identity? | no mixing | average | learned | learned beats average? |
+|---|---|---|---|---|---|
+| MAGE | yes | – | 13.79 / 18.19 | 13.79 / 18.29 | **no** (its graph collapses to the average) |
+| AGCRN | yes | 18.96 / 23.47 | **15.64 / 19.43** | 15.79 / 19.41 | **no** |
+| MTGNN | yes | 15.44 / 19.14 | **15.11 / 19.00** | 15.24 / 19.18 | **no** |
+| STAEformer | yes | 13.38 / 18.57 | 13.41 / 18.35 | 13.47 / 18.26 | **no** / slightly |
+| Graph WaveNet | **no** | 17.04 / 22.77 | 15.98 / 21.83 | 14.78 / 19.14 | **yes** |
+| ASTGCN | **no** | 20.97 / 26.33 | 20.50 / 25.70 | 19.05 / 22.04 | **yes** |
+
+**Intervention: give the two exceptions identity, keep the plain average.**
+
+| Test MAE (PEMS08 / PEMS04) | Graph WaveNet | ASTGCN |
+|---|---|---|
+| learned graph | 14.78 / 19.14 | 19.05 / 22.04 |
+| average | 15.98 / 21.83 | 20.50 / 25.70 |
+| **average + identity** | **14.67 / 18.80** (beats learned) | **19.04** / 24.00 (equal; half the gap) |
+| fixed random graph, never trained | 15.31 / 20.11 | 21.22 / 26.51 |
+
+In Graph WaveNet the learned graph was compensating for missing identity; even a random graph, which only makes sensors look different from each other, recovers 55–64 % of its gain. ASTGCN keeps part of its gain on PEMS04 because its attention operates on the real road graph.
+
+**Supporting evidence.**
+- **MAGE's graph collapses to the average.** In every trained MAGE, including the unmodified official code, its 16 graph experts become the plain sensor average within the first epoch; replacing them by the exact average changes MAE by ≤ 0.001, so 56–69 % of its parameters do no work. Preventing the collapse makes the graph random and the model overfits (+1.3 to +2.2 MAE).
+- **Learned graphs do not learn roads.** Road neighbours get 0.9–1.2× the weight of a random pair in most models; a few hub sensors dominate the links.
+- **Local structure does not explain the gain.** Dependence left after removing the network average does not predict where a learned graph helps (|ρ| ≤ 0.14 per sensor).
+
+**Conclusion.** In these benchmarks, spatial modelling reduces to two parts: a **network-wide common signal** and **each sensor's identity**. Given identity, a learned graph is unnecessary, with one exception: attention built on the real road graph (ASTGCN on PEMS04).
+
+#### 3. Proposed: a learning-free spatial module
+
+Both parts can be provided without learning a graph or any per-sensor parameter:
+
+1. **Fixed aggregation:** the network-wide average of all sensors, computed once per time step and shared by every sensor (one learned strength per layer).
+2. **Computed identity:** a 52-number profile per sensor from its training data (hourly weekday and weekend shape, volume, morning/evening peak ratio, loading on the network average), passed through one shared linear layer.
+
+Each sensor is then forecast from its own history, the network average and its profile. The forecasting backbone is still trained; the spatial module and the identity involve no learned graph and no per-sensor parameters. Implemented on slim MAGE (`MAGE_MS/streams.py`, arm `lite`, `--identity profile`), 96 → 12 steps:
+
+| PEMS08 / PEMS04 | MAGE | average + learned identity | average, no identity | **average + computed identity** |
+|---|---|---|---|---|
+| test MAE | 13.79 / 18.29 | 13.79 / 18.19 | 14.61 / 19.87 | **13.85 / 18.25** |
+| parameters | 1.87 M / 2.73 M | 0.72 M / 0.74 M | 0.70 M | **0.70 M** + 7 k shared |
+| learned per-sensor parameters | ~6,300 per sensor | 128 per sensor | 0 | **0** |
+
+The computed profile recovers 92–96 % of the value of a learned embedding and is within noise of MAGE.
+
+**Across datasets, seeds and window lengths** (test MAE; "unseen" = 20 % of sensors excluded from training, profile computed from their history in the training period; PEMS04 / PEMS08 at 96 steps are 3-seed means, other rows 1 seed):
+
+| setting | learned identity | **computed identity** | no identity | unseen: learned | **unseen: computed** | unseen: none |
+|---|---|---|---|---|---|---|
+| PEMS04, 96 → 12 | **18.21** | 18.25 | 19.93 | 32.40 | **20.36** | 21.81 |
+| PEMS08, 96 → 12 | **13.78** | 13.84 | 14.55 | 22.73 | **16.66** | 16.95 |
+| PEMS03, 96 → 12 | 14.66 | **14.38** | 15.12 | 28.05 | **13.95** | 14.81 |
+| PEMS07, 96 → 12 | 19.45 | **19.37** | 21.49 | 27.40 | **19.09** | 20.80 |
+| PEMS04, 12 → 12 | 18.35 | **18.20** | 20.55 | 42.21 | **21.08** | 22.25 |
+| PEMS08, 12 → 12 | 13.84 | **13.64** | 14.57 | 28.22 | 17.34 | **17.32** |
+
+- **Known sensors:** the computed profile matches the learned embedding (slightly behind on PEMS04 / PEMS08 at 96 steps, +0.04 / +0.05; ahead on PEMS03, PEMS07 and with 12-step inputs, −0.08 to −0.27) and is always far better than no identity.
+- **New sensors:** a learned embedding fails (27–42 MAE, worse than no identity). The computed profile is the best option in 5 of 6 settings (−0.3 to −1.7 vs no identity) and ties in one.
+- **How much history a new sensor needs:** a profile from the last 7 days is as good as the full training period; 3 days is not enough (about the no-identity level).
+
+#### 4. Related work and novelty
+
+| Work | Claim | Relation to ours |
+|---|---|---|
+| STID (CIKM 2022), STAEformer (CIKM 2023) | identity embeddings make simple models strong; sensors must be distinguishable | we show *why learned graphs help* in existing models (missing identity), confirm it by intervention, and measure what identity encodes |
+| U-Trans (arXiv 2026) | a uniform average matches spatial attention | same aggregation; we explain when it suffices and the exceptions |
+| FAF (ICML 2026), SGP (AAAI 2023), SimST | fixed neighbourhood aggregation replaces message passing | in traffic a **global** average suffices; road neighbourhoods added nothing on top |
+| DeepGLO (NeurIPS 2019) | global factors + per-series models | same family; reached from what learned graphs actually do |
+| SCPT, MoGERNN (2025) | forecasting for unseen roads / locations | SCPT learns a history encoder with pre-training; we use a few computed statistics, no pre-training |
+| Common Correlated Effects (Pesaran 2006) | cross-sectional averages proxy common factors | the collapsed adaptive graph computes exactly this average |
+
+The ingredients exist separately. The contribution is the **diagnosis**: in published adaptive-graph forecasters, the learned graph substitutes for sensor identity on top of a network-wide average, shown by intervention across six models, which yields a simple learning-free alternative.
+
+#### 5. Limitations
+
+Three seeds for the main comparison on PEMS04 / PEMS08, one seed elsewhere; four datasets (traffic flow only); the five comparison models are reimplemented from the official code; the proposed module is tested inside slim MAGE at 96 → 12 steps; the unseen-sensor profile requires some history for the new sensor. PEMS at a 1-hour horizon is close to its noise floor. Next: 3–5 seeds, PEMS03/07 and LargeST, MAGE's 12 → 12 setting, comparison with SCPT.
+
+---
+
+#### Appendix
+
+**How we got here.** The original proposal (summarised in [`experiment_log.md`](experiment_log.md), "Archived documents") gave MAGE several time scales and let coarser scales mix further across the sensor graph. It failed (PEMS08, 5 seeds: ties with uniform and reversed mixing), because coarser scales are more correlated across sensors but not over longer road distances: most shared signal is one network-wide shock. Investigating that shock led to the collapse finding and then to the identity explanation.
+
+**Other directions tried** (negative or inconclusive): multi-scale encoders and longer windows; separate scale streams; bounded λ (−0.04 MAE); co-fluctuation, road or learned low-rank graphs on top of the average; a general / time / sensor rank hierarchy; preventing MAGE's collapse. Growing a learned graph from the average only while validation improves selected the average alone.
+
+**Code.**
+
+| What | Where |
+|---|---|
+| Slim MAGE, computed identity, unseen-sensor test | `MAGE_MS/streams.py`, `MAGE_MS/train.py`, `run_identity_mage.sh` |
+| Other models (reimplemented) and mixing / identity variants | `MAGE_MS/others/reimpl*.py`, `train_other*.py`, `run_identity.sh` |
+| What identity encodes; graph analyses; per-sensor test | `MAGE_MS/others/identity_check.py`, `what_graphs_learn.py`, `rq_test.py` |
+| Which MAGE parameters do work | `MAGE_MS/diag_useful.py` |
+
+## 2026-11-20 · Repository cleanup
+The first-phase code and results (multi-scale proposal, routing, cost, diagnostics, step 8, rank hierarchy, methods A / B,
+official reproduction) moved to `MAGE_MS/archive/` (see `MAGE_MS/archive/README.md`); log entries above keep their
+original paths. `others/results/staeformer_<ds>_s0_mean.json` had been overwritten by the 2026-11-09 U-Trans-style rerun
+(learned identity, 18.299 / 13.437); the cross-model-check values (18.350 / 13.407) are restored there and the rerun is
+saved as `staeformer_<ds>_s0_mean_idlearned.json`.

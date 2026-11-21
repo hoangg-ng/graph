@@ -1,0 +1,1 @@
+{"ckpt": "results/coldstart/ckpt/PEMS08_win_k1.pt", "identity": "hrel", "dataset": "PEMS08", "unseen_mae": {"0": 18.65500259399414, "1": 16.704692840576172, "3": 16.024730682373047, "7": 15.982067108154297, "full": 16.01548194885254}}

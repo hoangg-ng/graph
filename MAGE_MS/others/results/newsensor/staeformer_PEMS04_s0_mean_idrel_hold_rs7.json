@@ -1,0 +1,34 @@
+{
+ "tag": "staeformer_PEMS04_s0_mean_idrel_hold_rs7",
+ "identity": "rel",
+ "dataset": "PEMS04",
+ "trained_unseen_mae": 20.293703079223633,
+ "seen_mae": 18.177291870117188,
+ "no_history": 27.496068954467773,
+ "days": {
+  "1": {
+   "computed": 24.788467407226562,
+   "sft_computed": 24.788467407226562,
+   "sft_computed_steps": 0,
+   "sft_zero": 28.68359375,
+   "sft_zero_steps": 120
+  },
+  "3": {
+   "computed": 21.307931900024414,
+   "sft_computed": 21.307931900024414,
+   "sft_computed_steps": 0,
+   "sft_zero": 21.32329750061035,
+   "sft_zero_steps": 120
+  },
+  "7": {
+   "computed": 20.55629539489746,
+   "sft_computed": 20.55629539489746,
+   "sft_computed_steps": 0,
+   "sft_zero": 20.700727462768555,
+   "sft_zero_steps": 120
+  },
+  "0": {
+   "computed": 20.29375648498535
+  }
+ }
+}

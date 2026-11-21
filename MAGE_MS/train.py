@@ -33,7 +33,7 @@ def masked_metrics(pred, y):
     return mae, rmse, mape
 
 
-def main():
+def main(argv=None):   # argv: list of arguments (batch_run.py runs several jobs in one process)
     p = argparse.ArgumentParser()
     p.add_argument('--dataset', default='PEMS08')
     p.add_argument('--encoder', default='linear')
@@ -57,15 +57,23 @@ def main():
     p.add_argument('--switch_at', type=int, default=0,
                    help='method B (arm mage): after this epoch, if every block\'s graph entropy > 0.99, replace the '
                         'graph experts by the slim mean term (keep all other weights) and continue')
-    p.add_argument('--identity', default='learned', choices=['learned', 'profile', 'none'],
-                   help='step 8 only: sensor identity = learned embedding, computed profile, or none')
+    p.add_argument('--identity', default='learned', choices=['learned', 'profile', 'none', 'pca', 'scpt', 'hraw', 'hrel', 'wpca', 'wpcarel'],
+                   help='step 8 only: sensor identity = learned embedding, computed profile, none, or the PCA / SCPT baselines (id_features.py)')
     p.add_argument('--profile_days', type=int, default=0,
                    help='computed profile from only the last N days of the training span (0 = whole span)')
+    p.add_argument('--unseen_days', type=int, default=0,
+                   help='identity hraw / hrel: unseen sensors get identity from only their last N days (0 = whole span)')
+    p.add_argument('--id_window', type=int, default=0,
+                   help='identity hrel: 1 = resample each sensor\'s identity from a random 1-7 day window every batch (cold-start training)')
+    p.add_argument('--id_os', type=int, default=0, help='identity hrel: 1 = add occupancy and speed (relative to the network mean)')
     p.add_argument('--holdout', type=float, default=0.0,
                    help='unseen-sensor test: fraction of sensors excluded from training (loss and network average)')
     p.add_argument('--log_graph', type=int, default=0, help='step 8 only: print graph entropy after every epoch')
     p.add_argument('--tf32', type=int, default=0, help='1: TF32 matmuls (Ampere+; faster, ~1e-3 relative precision)')
-    a = p.parse_args()
+    p.add_argument('--eval_ckpt', default='', help='2026-11-18: skip training; load this checkpoint and test unseen sensors at each --eval_days')
+    p.add_argument('--eval_days', default='0,1,3,7,full',
+                   help='unseen-sensor history for --eval_ckpt: 0 = no data (identity = mean of known sensors), k days, full')
+    a = p.parse_args(argv)
 
     torch.manual_seed(a.seed); np.random.seed(a.seed)
     torch.backends.cuda.matmul.allow_tf32 = bool(a.tf32); torch.backends.cudnn.allow_tf32 = bool(a.tf32)
@@ -98,9 +106,21 @@ def main():
         rng = np.random.default_rng(123)
         hold = np.zeros(N, bool); hold[rng.choice(N, int(round(a.holdout * N)), replace=False)] = True
     prof = streams.sensor_profile(z['data'], int(idx['train'][-1]) + 1, None if hold is None else ~hold, days=a.profile_days) if a.identity == 'profile' else None
+    if a.identity in ('pca', 'scpt', 'hraw', 'hrel'):  # baselines / 2026-11-18 raw vs network-relative from published inductive methods, same slot as the profile
+        import id_features
+        prof = id_features.build(a.identity, z['data'], int(idx['train'][-1]) + 1, None if hold is None else ~hold, dev=dev, seed=a.seed,
+                                 unseen_days=a.unseen_days, scale=(mean, std))
+    win = None
+    if (a.identity == 'hrel' and (a.id_window or a.id_os)) or a.identity in ('wpca', 'wpcarel'):   # 2026-11-18 cold start (wpca*: PCA, short-window aware)
+        import id_features
+        win = id_features.WindowIdentity(f'{ROOT}/raw/ASTGNN/data/{a.dataset}/{a.dataset}.npz', z['data'], int(idx['train'][-1]) + 1,
+                                         np.ones(N, bool) if hold is None else ~hold, use_os=bool(a.id_os), dev=dev, seed=a.seed,
+                                         kind={'wpca': 'pca', 'wpcarel': 'pcarel'}.get(a.identity, 'hrel'))
+        eval_prof = win.eval_identity(a.unseen_days)
+        prof = eval_prof.clone()
     if a.arm:
         model = streams.MAGEStream(margs, arm=a.arm, lam=a.lam, graph_fix=a.graph_fix, hier_rank=a.hier_rank, fixed_graph=G,
-                                   identity=a.identity, profile=prof, node_num=N, input_dim=C, output_dim=1,
+                                   identity='profile' if a.identity in ('pca', 'scpt', 'hraw', 'hrel', 'wpca', 'wpcarel') else a.identity, profile=prof, node_num=N, input_dim=C, output_dim=1,
                                    seq_len=a.seq_len, horizon=a.horizon).to(dev)
         n_enc = model.encoder_params()
     else:
@@ -125,6 +145,8 @@ def main():
     bias = torch.zeros(3, margs.recur_num, device=dev)
 
     def predict(split):
+        if win is not None:
+            model.profile.copy_(eval_prof)             # evaluation: fixed identities (unseen sensors: last k days only)
         model.eval(); P, Y = [], []
         with torch.no_grad():
             for ix in idx[split].split(a.bs):
@@ -132,6 +154,36 @@ def main():
                 P.append(model(x, bias=bias)[..., 0] * std + mean); Y.append(y)
         return torch.cat(P), torch.cat(Y)
 
+    if a.eval_ckpt:                            # 2026-11-18: same trained model, unseen sensors given 0 / k / all days
+        ck = torch.load(a.eval_ckpt, map_location=dev)
+        model.load_state_dict(ck['state']); bias = ck['bias']
+        hc = torch.from_numpy(np.where(hold)[0]).to(dev)
+        kmask = torch.from_numpy(~hold).to(dev)
+        def ident(k):                          # identity with unseen sensors from their last k days (0 = all days)
+            if win is not None:
+                return win.eval_identity(k)
+            if a.identity in ('hraw', 'hrel'):
+                return id_features.build(a.identity, z['data'], int(idx['train'][-1]) + 1, ~hold, dev=dev, seed=a.seed,
+                                         unseen_days=k, scale=(mean, std)).to(dev)
+            return None if k else model.profile.clone()   # pca / scpt / profile: whole span only
+        out = {}
+        for d in a.eval_days.split(','):
+            if a.identity in ('learned', 'none'):
+                if d != a.eval_days.split(',')[0]:
+                    out[d] = out[a.eval_days.split(',')[0]]; continue
+            else:
+                E = ident(0 if d in ('0', 'full') else int(d))
+                if E is None:
+                    continue
+                if d == '0':
+                    E = E.clone(); E[hc] = E[kmask].mean(0)
+                model.profile.copy_(E)
+                eval_prof = E                  # predict() re-copies eval_prof for window models
+            P, Y = predict('test')
+            out[d] = masked_metrics(P[..., hc], Y[..., hc])[0].item()
+            print(f'eval days {d}: unseen MAE {out[d]:.3f}', flush=True)
+        json.dump(dict(ckpt=a.eval_ckpt, identity=a.identity, dataset=a.dataset, unseen_mae=out), open(a.out, 'w'))
+        return
     best, best_state, wait, ep_times, log = float('inf'), None, 0, [], []
     torch.cuda.reset_peak_memory_stats(dev)
     for ep in range(a.epochs):
@@ -139,6 +191,8 @@ def main():
         perm = idx['train'][torch.randperm(len(idx['train']), device=dev)]
         for ix in perm.split(a.bs):
             x, y = batch(ix)
+            if win is not None and a.id_window:
+                model.profile.copy_(win.sample())      # training: identity from a random short window, per sensor
             out, counts = model(x, bias=bias)
             loss = masked_metrics((out[..., 0] * std + mean)[..., train_cols], y[..., train_cols])[0]
             opt.zero_grad(set_to_none=True); loss.backward()

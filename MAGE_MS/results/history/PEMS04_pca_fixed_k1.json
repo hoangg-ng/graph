@@ -1,0 +1,1 @@
+{"ckpt": "results/coldstart/ckpt/PEMS04_pca_fixed_k1.pt", "identity": "wpca", "dataset": "PEMS04", "unseen_mae": {"0": 29.55951499938965, "1": 33.71135330200195, "3": 23.169240951538086, "7": 20.621335983276367, "full": 19.993547439575195}}

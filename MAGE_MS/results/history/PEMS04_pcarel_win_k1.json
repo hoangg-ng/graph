@@ -1,0 +1,1 @@
+{"ckpt": "results/coldstart/ckpt/PEMS04_pcarel_win_k1.pt", "identity": "wpcarel", "dataset": "PEMS04", "unseen_mae": {"0": 24.832162857055664, "1": 22.573081970214844, "3": 21.109630584716797, "7": 20.645263671875, "full": 20.57771110534668}}
